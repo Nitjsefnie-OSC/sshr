@@ -122,8 +122,8 @@ func cmdAdd(store *app.Store, args []string) {
 	}
 	if key != "" {
 		expanded := expandHome(key)
-		if _, err := os.Stat(expanded); err != nil {
-			fmt.Fprintf(os.Stderr, "sshr add: key file not found: %s\n", expanded)
+		if err := checkKeyFile(expanded); err != nil {
+			fmt.Fprintf(os.Stderr, "sshr add: %v\n", err)
 			os.Exit(1)
 		}
 		key = expanded
@@ -313,8 +313,8 @@ func promptKeyPath(scanner *bufio.Scanner) string {
 		os.Exit(1)
 	}
 	expanded := expandHome(path)
-	if _, err := os.Stat(expanded); err != nil {
-		fmt.Fprintf(os.Stderr, "sshr: key file not found: %s\n", expanded)
+	if err := checkKeyFile(expanded); err != nil {
+		fmt.Fprintf(os.Stderr, "sshr add: %v\n", err)
 		os.Exit(1)
 	}
 	return expanded
@@ -367,17 +367,36 @@ func findSSHKeys() []string {
 			continue
 		}
 		path := filepath.Join(sshDir, name)
-		info, err := e.Info()
-		if err != nil || info.Size() > 16384 || info.Size() == 0 {
-			continue
-		}
-		b, err := os.ReadFile(path)
-		if err != nil || !strings.Contains(string(b), "PRIVATE KEY") {
+		if checkKeyFile(path) != nil {
 			continue
 		}
 		keys = append(keys, path)
 	}
 	return keys
+}
+
+// checkKeyFile accepts a small file with a "PRIVATE KEY" header (OpenSSH
+// and PEM formats), so a public key or a wrong path fails at add, not later
+// at connect.
+func checkKeyFile(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("key file not found: %s", path)
+	}
+	if !info.Mode().IsRegular() || info.Size() == 0 || info.Size() > 16384 {
+		return fmt.Errorf("not a private key file: %s", path)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(string(b), "PRIVATE KEY") {
+		if strings.HasSuffix(path, ".pub") {
+			return fmt.Errorf("%s is a public key; pass the file without .pub", path)
+		}
+		return fmt.Errorf("not a private key file: %s", path)
+	}
+	return nil
 }
 
 func expandHome(path string) string {
