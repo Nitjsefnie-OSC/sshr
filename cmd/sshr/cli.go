@@ -82,10 +82,7 @@ func cmdAdd(store *app.Store, args []string) {
 		} else if strings.HasPrefix(a, "--user=") || strings.HasPrefix(a, "-u=") {
 			user = strings.SplitN(a, "=", 2)[1]
 		} else if strings.HasPrefix(a, "--port=") || strings.HasPrefix(a, "-p=") {
-			v := strings.SplitN(a, "=", 2)[1]
-			if n, err := strconv.Atoi(v); err == nil && n > 0 {
-				port = n
-			}
+			port = mustPort(strings.SplitN(a, "=", 2)[1])
 		} else if strings.HasPrefix(a, "--key=") || strings.HasPrefix(a, "-k=") {
 			key = strings.SplitN(a, "=", 2)[1]
 		} else if (a == "-n" || a == "--name") && i+1 < len(args) {
@@ -96,9 +93,7 @@ func cmdAdd(store *app.Store, args []string) {
 			user = args[i]
 		} else if (a == "-p" || a == "--port") && i+1 < len(args) {
 			i++
-			if n, err := strconv.Atoi(args[i]); err == nil && n > 0 {
-				port = n
-			}
+			port = mustPort(args[i])
 		} else if (a == "-k" || a == "--key") && i+1 < len(args) {
 			i++
 			key = args[i]
@@ -137,6 +132,16 @@ func cmdAdd(store *app.Store, args []string) {
 		msg += fmt.Sprintf(" key=%s", h.Key)
 	}
 	fmt.Println(msg)
+}
+
+// mustPort parses -p for add and exits on anything outside 1–65535.
+func mustPort(v string) int {
+	n, err := app.ParsePort(v)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sshr add: invalid port %q (expected 1-65535)\n", v)
+		os.Exit(1)
+	}
+	return n
 }
 
 func cmdRm(store *app.Store, args []string) {

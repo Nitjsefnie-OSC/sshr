@@ -2,7 +2,6 @@ package ui
 
 import (
 	"errors"
-	"strconv"
 	"strings"
 
 	"gioui.org/app"
@@ -251,6 +250,8 @@ func (s *state) mapErr(err error) string {
 		return s.t("err.host_empty")
 	case errors.Is(err, sshrapp.ErrUserRequired):
 		return s.t("err.user_required")
+	case errors.Is(err, sshrapp.ErrPortInvalid):
+		return s.t("err.port_invalid")
 	case errors.Is(err, sshrapp.ErrNotFound):
 		return s.t("err.not_found")
 	default:
@@ -261,8 +262,8 @@ func (s *state) mapErr(err error) string {
 func (s *state) saveHost() {
 	port := 22
 	if p := strings.TrimSpace(s.portEd.Text()); p != "" {
-		n, err := strconv.Atoi(p)
-		if err != nil || n <= 0 {
+		n, err := sshrapp.ParsePort(p)
+		if err != nil {
 			s.form.err = s.t("err.port_invalid")
 			return
 		}

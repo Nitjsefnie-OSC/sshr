@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -18,7 +19,17 @@ var (
 	ErrHostEmpty    = errors.New("host_empty")
 	ErrUserRequired = errors.New("user_required")
 	ErrNotFound     = errors.New("not_found")
+	ErrPortInvalid  = errors.New("port_invalid")
 )
+
+// ParsePort reads a TCP port: digits only, 1–65535.
+func ParsePort(s string) (int, error) {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || n < 1 || n > 65535 {
+		return 0, ErrPortInvalid
+	}
+	return n, nil
+}
 
 // AmbiguousError means a query matched several hosts; Hosts lists them so the
 // caller can ask for an exact ID instead of guessing.
@@ -76,8 +87,11 @@ func (s *Store) Add(name, host, user, key string, port int) (*Host, error) {
 	if name == "" {
 		name = host
 	}
-	if port <= 0 {
+	if port == 0 {
 		port = 22
+	}
+	if port < 1 || port > 65535 {
+		return nil, ErrPortInvalid
 	}
 
 	id, err := newID()
