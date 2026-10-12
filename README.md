@@ -45,6 +45,7 @@ In the order we intend to build them (reasons in [docs/WHY.md](docs/WHY.md)):
    - attach to tmux/zellij on connect ([#20](https://github.com/klovbin/sshr/issues/20)) — the remote session survives a dropped connection, over plain ssh, on every OS;
    - saved port forwards per host ([#21](https://github.com/klovbin/sshr/issues/21)) — "open DB", "open admin panel" in one click;
    - connection reuse with `ControlMaster`/`ControlPersist` ([#22](https://github.com/klovbin/sshr/issues/22)) — a second session to the same host opens instantly;
+   - sending clipboard images to the server ([#26](https://github.com/klovbin/sshr/issues/26)) — a pasted screenshot is uploaded over a separate ssh with the host's saved key, port and jump host, and the path *on the server* is returned instead of a path on the local disk. The same scheme already works in the author's terminal (MyCustomTerm): key login only (`BatchMode`), the file lands in `~/.cache/<app>/pasted/`, a detached `sleep` removes it after 15 minutes and every next upload sweeps older leftovers. Planned as `sshr paste <host>`;
    - mosh, off by default — done ([#23](https://github.com/klovbin/sshr/issues/23)).
 3. Password handling: local secrets, then encrypted vault ([#15](https://github.com/klovbin/sshr/issues/15))
 4. Cross-platform installer with OS auto-detection and PATH setup ([#11](https://github.com/klovbin/sshr/issues/11))
