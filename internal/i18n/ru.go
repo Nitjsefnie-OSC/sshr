@@ -9,6 +9,8 @@ var ru = map[string]string{
 	"status.count": "хостов: %d",
 	"status.added":   "добавлен: %s",
 	"status.deleted": "удалён: %s",
+	"status.uploading": "отправляю картинку на %s…",
+	"status.uploaded":  "картинка на %s, путь к ней в буфере обмена",
 
 	"list.empty": "Список пуст — жми «Добавить»",
 
@@ -16,6 +18,7 @@ var ru = map[string]string{
 	"btn.save":     "Сохранить",
 	"btn.cancel":   "Отмена",
 	"btn.delete":   "Удалить",
+	"btn.sendImage": "Отправить картинку",
 	"btn.settings": "Настройки",
 	"btn.back":     "Назад",
 	"nav.hosts":    "Серверы",
@@ -39,6 +42,7 @@ var ru = map[string]string{
 	"sidebar.hosts.hint":  "Список и фильтры — сюда",
 	"sidebar.about":       "About",
 
+	"err.noImage":       "в буфере обмена нет картинки",
 	"err.host_empty":    "host пустой",
 	"err.user_required": "user обязателен",
 	"err.port_invalid":  "порт кривой",

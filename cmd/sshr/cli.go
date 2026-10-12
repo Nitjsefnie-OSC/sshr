@@ -34,6 +34,8 @@ func runCLI(args []string) {
 		cmdRm(store, args[1:])
 	case "connect", "ssh":
 		cmdConnect(store, args[1:])
+	case "paste":
+		cmdPaste(store, args[1:])
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -176,12 +178,8 @@ func cmdConnect(store *app.Store, args []string) {
 	if err != nil {
 		findFailed("connect", query, err)
 	}
-	sshOpts := []string{}
-	if h.Key != "" {
-		sshOpts = append(sshOpts, "-i", h.Key)
-	}
-	sshOpts = append(sshOpts, "-p", strconv.Itoa(h.Port))
-	dest := h.User + "@" + h.Host
+	sshOpts := app.SSHArgs(h)
+	dest := h.Dest()
 
 	if useMosh {
 		if code, ok := runMosh(h, sshOpts, dest); ok {
@@ -252,6 +250,11 @@ Usage:
   sshr connect [--mosh|--ssh] <name or id>
                                     ssh into a host (mosh if enabled
                                     in settings or with --mosh)
+  sshr paste [-c] [-f <file>] <name or id>
+                                    upload the clipboard image (or a file)
+                                    to the host and print its path there;
+                                    -c also copies that path; removed from
+                                    the server after 15 minutes
   sshr help                         show this help`)
 }
 

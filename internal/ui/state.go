@@ -60,6 +60,9 @@ type state struct {
 	moshBox     widget.Bool
 	list        widget.List
 	hostDelBtns []widget.Clickable // parallel to hosts
+	hostImgBtns []widget.Clickable // parallel to hosts
+	uploads     chan uploadResult  // finished image uploads from goroutines
+	uploading   bool
 	modal       confirmModal       // delete confirm
 	form        formModal          // add host
 	settingsIC  *widget.Icon
@@ -92,6 +95,7 @@ func (s *state) reload() {
 	s.hosts = hosts
 	if len(s.hostDelBtns) != len(hosts) {
 		s.hostDelBtns = make([]widget.Clickable, len(hosts))
+		s.hostImgBtns = make([]widget.Clickable, len(hosts))
 	}
 	if len(hosts) == 0 {
 		s.status = s.t("status.empty")
@@ -175,7 +179,11 @@ func (s *state) handle(gtx layout.Context) {
 		if s.hostDelBtns[i].Clicked(gtx) {
 			s.openDeleteConfirm(s.hosts[i])
 		}
+		if i < len(s.hostImgBtns) && s.hostImgBtns[i].Clicked(gtx) {
+			s.startUpload(s.hosts[i])
+		}
 	}
+	s.finishUploads(gtx)
 	if s.modal.open {
 		_ = s.modal.card.Clicked(gtx) // absorb; never dismiss
 		if s.modal.scrim.Clicked(gtx) {

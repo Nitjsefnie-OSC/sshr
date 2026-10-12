@@ -7,7 +7,7 @@ sshr is a desktop SSH hosts manager that keeps your server list local and under 
 It currently supports:
 
 - Adding and listing SSH hosts (name, host/IP, user, port)
-- CLI commands: `list`, `add`, `rm`, `connect`, `help`
+- CLI commands: `list`, `add`, `rm`, `connect`, `paste`, `help`
 - Private key support (`-k` flag or interactive selection)
 - Auto-discovery of SSH keys in `~/.ssh/`
 - Interactive authentication method prompt when adding hosts
@@ -15,6 +15,7 @@ It currently supports:
 - Settings with interface language (Russian / English)
 - Resizable sidebar layout and icon navigation
 - Optional mosh transport, off by default (see [Connecting with mosh](#connecting-with-mosh))
+- Sending a clipboard image to a server, from the CLI and the app (see [Sending images to a server](#sending-images-to-a-server))
 
 ## Connecting with mosh
 
@@ -35,6 +36,37 @@ sshr connect --ssh web    # plain ssh even if mosh is on
 
 If mosh is not installed, or it fails within the first 20 seconds (no mosh-server, UDP blocked), sshr falls back to plain ssh and says so. A key path with spaces cannot be passed through mosh, so such hosts always use ssh.
 
+## Sending images to a server
+
+Pasting a screenshot into a remote session gives the server a path on *your* disk, which it cannot open. Remote Claude Code, an editor or a script just gets a useless string. sshr uploads the image to the host instead and gives you the path on the server.
+
+```sh
+sshr paste web              # clipboard image -> server, prints the remote path
+sshr paste -c web           # same, and puts that path into the clipboard
+sshr paste -f shot.png web  # upload a file instead of the clipboard
+```
+
+In the app, every host has a **Send image** button. The remote path goes straight into the clipboard, so you paste it into the session.
+
+How it works:
+
+- a separate `ssh` with the host's saved key and port writes the file to `~/.cache/sshr/pasted/` on the server and prints its path;
+- the file is removed after 15 minutes by a detached `sleep`, and every upload also deletes older leftovers, in case that `sleep` was killed by a logout;
+- the server needs only `sh`; the command runs under `sh -c`, so a fish or zsh login shell is fine;
+- the CLI can ask for a password on the terminal. The app has no terminal, so it uses `BatchMode` and works only with a key or ssh-agent;
+- `-c` is opt-in because it replaces the image in your clipboard with the path.
+
+Reading the clipboard uses tools the OS already has, so the binary needs no cgo:
+
+| OS | read image | copy path (`-c`) |
+|----|------------|------------------|
+| Linux, Wayland | `wl-paste` (wl-clipboard) | `wl-copy` |
+| Linux, X11 | `xclip` | `xclip` |
+| macOS | `osascript` (built in) | `pbcopy` |
+| Windows | PowerShell (built in) | `clip` |
+
+On Linux, install `wl-clipboard` or `xclip` if you don't have them. The same scheme already works in the author's terminal (MyCustomTerm).
+
 ## Planned
 
 In the order we intend to build them (reasons in [docs/WHY.md](docs/WHY.md)):
@@ -45,7 +77,7 @@ In the order we intend to build them (reasons in [docs/WHY.md](docs/WHY.md)):
    - attach to tmux/zellij on connect ([#20](https://github.com/klovbin/sshr/issues/20)) — the remote session survives a dropped connection, over plain ssh, on every OS;
    - saved port forwards per host ([#21](https://github.com/klovbin/sshr/issues/21)) — "open DB", "open admin panel" in one click;
    - connection reuse with `ControlMaster`/`ControlPersist` ([#22](https://github.com/klovbin/sshr/issues/22)) — a second session to the same host opens instantly;
-   - sending clipboard images to the server ([#26](https://github.com/klovbin/sshr/issues/26)) — a pasted screenshot is uploaded over a separate ssh with the host's saved key, port and jump host, and the path *on the server* is returned instead of a path on the local disk. The same scheme already works in the author's terminal (MyCustomTerm): key login only (`BatchMode`), the file lands in `~/.cache/<app>/pasted/`, a detached `sleep` removes it after 15 minutes and every next upload sweeps older leftovers. Planned as `sshr paste <host>`;
+   - sending clipboard images to the server — done ([#26](https://github.com/klovbin/sshr/issues/26));
    - mosh, off by default — done ([#23](https://github.com/klovbin/sshr/issues/23)).
 3. Password handling: local secrets, then encrypted vault ([#15](https://github.com/klovbin/sshr/issues/15))
 4. Cross-platform installer with OS auto-detection and PATH setup ([#11](https://github.com/klovbin/sshr/issues/11))

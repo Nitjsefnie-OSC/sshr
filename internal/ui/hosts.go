@@ -38,6 +38,18 @@ func layoutHosts(gtx layout.Context, th *material.Theme, s *state) layout.Dimens
 					)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if i >= len(s.hostImgBtns) {
+						return layout.Dimensions{}
+					}
+					btn := material.Button(th, &s.hostImgBtns[i], s.t("btn.sendImage"))
+					btn.TextSize = unit.Sp(12)
+					btn.Inset = layout.Inset{
+						Top: unit.Dp(6), Bottom: unit.Dp(6),
+						Left: unit.Dp(10), Right: unit.Dp(10),
+					}
+					return layout.Inset{Right: unit.Dp(8)}.Layout(gtx, btn.Layout)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					if i >= len(s.hostDelBtns) {
 						return layout.Dimensions{}
 					}

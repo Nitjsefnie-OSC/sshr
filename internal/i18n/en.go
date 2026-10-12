@@ -9,6 +9,8 @@ var en = map[string]string{
 	"status.count": "hosts: %d",
 	"status.added":   "added: %s",
 	"status.deleted": "deleted: %s",
+	"status.uploading": "sending image to %s…",
+	"status.uploaded":  "image is on %s, its path is in the clipboard",
 
 	"list.empty": "List empty — tap Add",
 
@@ -16,6 +18,7 @@ var en = map[string]string{
 	"btn.save":     "Save",
 	"btn.cancel":   "Cancel",
 	"btn.delete":   "Delete",
+	"btn.sendImage": "Send image",
 	"btn.settings": "Settings",
 	"btn.back":     "Back",
 	"nav.hosts":    "Servers",
@@ -39,6 +42,7 @@ var en = map[string]string{
 	"sidebar.hosts.hint":  "List and filters go here",
 	"sidebar.about":       "About",
 
+	"err.noImage":       "no image in the clipboard",
 	"err.host_empty":    "host is required",
 	"err.user_required": "user is required",
 	"err.port_invalid":  "invalid port",
