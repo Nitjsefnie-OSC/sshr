@@ -10,7 +10,7 @@ It currently supports:
 - CLI commands: `list`, `add`, `rm`, `connect`, `paste`, `help`
 - Private key support (`-k` flag or interactive selection)
 - Auto-discovery of SSH keys in `~/.ssh/`
-- Interactive authentication method prompt when adding hosts
+- Interactive authentication method prompt when adding hosts; `--no-key` for password hosts in scripts (with no answer on stdin `add` stops instead of guessing)
 - Local vault storage per host file (0600 permissions)
 - Settings with interface language (Russian / English)
 - Resizable sidebar layout and icon navigation

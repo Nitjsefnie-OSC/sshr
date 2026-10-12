@@ -72,6 +72,7 @@ func cmdList(store *app.Store) {
 
 func cmdAdd(store *app.Store, args []string) {
 	var host, name, user, key string
+	noKey := false
 	port := 22
 	positional := make([]string, 0)
 
@@ -85,6 +86,8 @@ func cmdAdd(store *app.Store, args []string) {
 			port = mustPort(strings.SplitN(a, "=", 2)[1])
 		} else if strings.HasPrefix(a, "--key=") || strings.HasPrefix(a, "-k=") {
 			key = strings.SplitN(a, "=", 2)[1]
+		} else if a == "--no-key" {
+			noKey = true
 		} else if (a == "-n" || a == "--name") && i+1 < len(args) {
 			i++
 			name = args[i]
@@ -106,11 +109,15 @@ func cmdAdd(store *app.Store, args []string) {
 		host = positional[0]
 	}
 	if host == "" {
-		fmt.Fprintln(os.Stderr, "Usage: sshr add <host> -u <user> [-n <name>] [-p <port>] [-k <key>]")
+		fmt.Fprintln(os.Stderr, "Usage: sshr add <host> -u <user> [-n <name>] [-p <port>] [-k <key> | --no-key]")
 		os.Exit(1)
 	}
 	if user == "" {
 		fmt.Fprintln(os.Stderr, "sshr add: -u <user> required")
+		os.Exit(1)
+	}
+	if key != "" && noKey {
+		fmt.Fprintln(os.Stderr, "sshr add: -k and --no-key cannot be used together")
 		os.Exit(1)
 	}
 	if key != "" {
@@ -120,7 +127,7 @@ func cmdAdd(store *app.Store, args []string) {
 			os.Exit(1)
 		}
 		key = expanded
-	} else {
+	} else if !noKey {
 		key = promptAuthMethod()
 	}
 	h, err := store.Add(name, host, user, key, port)
@@ -249,8 +256,9 @@ func printUsage() {
 Usage:
   sshr                              open GUI
   sshr list                         list saved hosts
-  sshr add <host> -u <user> [-n <name>] [-p <port>] [-k <key>]
-                                    add a host
+  sshr add <host> -u <user> [-n <name>] [-p <port>] [-k <key> | --no-key]
+                                    add a host (asks for the auth method
+                                    unless -k or --no-key is given)
   sshr rm <name or id>              remove a host
   sshr connect [--mosh|--ssh] <name or id>
                                     ssh into a host (mosh if enabled
@@ -271,29 +279,38 @@ func promptAuthMethod() string {
 	fmt.Println("  [3] Password (no key)")
 	fmt.Print("\nChoice [1/2/3]: ")
 
-	if !scanner.Scan() {
-		return ""
-	}
-	choice := strings.TrimSpace(scanner.Text())
-
+	choice := readAnswer(scanner)
 	switch choice {
 	case "1":
 		return promptKeyPath(scanner)
 	case "2":
 		return pickFromSSHKeys(scanner)
+	case "3":
+		return ""
 	default:
+		fmt.Fprintf(os.Stderr, "\nsshr add: invalid choice %q\n", choice)
+		os.Exit(1)
 		return ""
 	}
 }
 
+// readAnswer reads one line of a prompt. With no input to read (stdin
+// closed, as in scripts and CI) it exits instead of guessing: saving a host
+// without the key the user meant would only fail later, on connect.
+func readAnswer(scanner *bufio.Scanner) string {
+	if !scanner.Scan() {
+		fmt.Fprintln(os.Stderr, "\nsshr add: no answer on stdin; pass -k <key> or --no-key")
+		os.Exit(1)
+	}
+	return strings.TrimSpace(scanner.Text())
+}
+
 func promptKeyPath(scanner *bufio.Scanner) string {
 	fmt.Print("Key path: ")
-	if !scanner.Scan() {
-		return ""
-	}
-	path := strings.TrimSpace(scanner.Text())
+	path := readAnswer(scanner)
 	if path == "" {
-		return ""
+		fmt.Fprintln(os.Stderr, "sshr add: empty key path")
+		os.Exit(1)
 	}
 	expanded := expandHome(path)
 	if _, err := os.Stat(expanded); err != nil {
@@ -308,10 +325,11 @@ func pickFromSSHKeys(scanner *bufio.Scanner) string {
 	if len(keys) == 0 {
 		fmt.Println("No keys found in ~/.ssh/")
 		fmt.Print("Enter path manually? [y/N]: ")
-		if scanner.Scan() && strings.ToLower(strings.TrimSpace(scanner.Text())) == "y" {
+		if strings.ToLower(readAnswer(scanner)) == "y" {
 			return promptKeyPath(scanner)
 		}
-		return ""
+		fmt.Fprintln(os.Stderr, "sshr add: no key chosen; use --no-key for password login")
+		os.Exit(1)
 	}
 
 	fmt.Println("\nFound keys:")
@@ -320,10 +338,7 @@ func pickFromSSHKeys(scanner *bufio.Scanner) string {
 	}
 	fmt.Printf("\nChoice [1-%d]: ", len(keys))
 
-	if !scanner.Scan() {
-		return ""
-	}
-	n, err := strconv.Atoi(strings.TrimSpace(scanner.Text()))
+	n, err := strconv.Atoi(readAnswer(scanner))
 	if err != nil || n < 1 || n > len(keys) {
 		fmt.Fprintln(os.Stderr, "sshr: invalid choice")
 		os.Exit(1)
