@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 
@@ -27,9 +28,10 @@ type confirmModal struct {
 	blockScrim bool            // skip one scrim click after open
 }
 
-// formModal is the add-host form overlay.
+// formModal is the add/edit host form overlay.
 type formModal struct {
 	open       bool
+	editID     string // empty = add
 	err        string
 	save       widget.Clickable
 	cancel     widget.Clickable
@@ -50,6 +52,31 @@ func (s *state) openDeleteConfirm(h sshrapp.Host) {
 func (s *state) openAddForm() {
 	s.modal.close()
 	s.clearForm()
+	s.form.editID = ""
+	s.form.err = ""
+	s.form.open = true
+	s.form.blockScrim = true
+	s.err = ""
+}
+
+func (s *state) openEditForm(h sshrapp.Host) {
+	s.modal.close()
+	s.clearForm()
+	s.nameEd.SetText(h.Name)
+	s.hostEd.SetText(h.Host)
+	s.userEd.SetText(h.User)
+	s.portEd.SetText(fmt.Sprintf("%d", h.Port))
+	if h.Key != "" {
+		s.authKind = authKey
+		s.keyEd.SetText(h.Key)
+		s.passEd.SetText("")
+	} else {
+		s.authKind = authPassword
+		s.keyEd.SetText("")
+		s.passEd.SetText(h.Password)
+	}
+	s.passEd.Mask = '•'
+	s.form.editID = h.ID
 	s.form.err = ""
 	s.form.open = true
 	s.form.blockScrim = true
@@ -66,6 +93,7 @@ func (m *confirmModal) close() {
 
 func (m *formModal) close() {
 	m.open = false
+	m.editID = ""
 	m.err = ""
 	m.blockScrim = false
 }
@@ -168,10 +196,14 @@ func layoutFormModal(gtx layout.Context, th *material.Theme, s *state) {
 	if !s.form.open {
 		return
 	}
-	layoutModalCard(gtx, unit.Dp(400), &s.form.scrim, &s.form.card, func(gtx layout.Context) layout.Dimensions {
+	title := s.t("modal.add.title")
+	if s.form.editID != "" {
+		title = s.t("modal.edit.title")
+	}
+	layoutModalCard(gtx, unit.Dp(420), &s.form.scrim, &s.form.card, func(gtx layout.Context) layout.Dimensions {
 		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				t := material.H6(th, s.t("modal.add.title"))
+				t := material.H6(th, title)
 				t.Color = colFG
 				return t.Layout(gtx)
 			}),

@@ -31,6 +31,13 @@ const (
 
 const appVersion = "0.01 alfa"
 
+type authKind int
+
+const (
+	authPassword authKind = iota
+	authKey
+)
+
 // state holds UI widgets, vault data, and transient status/errors.
 type state struct {
 	store        *sshrapp.Store
@@ -41,11 +48,16 @@ type state struct {
 	settingsPane settingsPane
 	win          *app.Window
 
-	// Add-host form editors (shown in form modal).
-	nameEd widget.Editor
-	hostEd widget.Editor
-	userEd widget.Editor
-	portEd widget.Editor
+	// Host form editors (shown in form modal).
+	nameEd   widget.Editor
+	hostEd   widget.Editor
+	userEd   widget.Editor
+	portEd   widget.Editor
+	keyEd       widget.Editor
+	passEd      widget.Editor
+	authKind    authKind
+	authPassBtn widget.Clickable
+	authKeyBtn  widget.Clickable
 
 	addBtn      widget.Clickable
 	settingsBtn widget.Clickable
@@ -58,12 +70,12 @@ type state struct {
 	langOpen    bool
 	moshBox     widget.Bool
 	list        widget.List
-	hostDelBtns []widget.Clickable // parallel to hosts
-	hostImgBtns []widget.Clickable // parallel to hosts
+	hostDelBtns  []widget.Clickable // parallel to hosts
+	hostEditBtns []widget.Clickable // parallel to hosts
 	uploads     chan uploadResult  // finished image uploads from goroutines
 	uploading   bool
 	modal       confirmModal       // delete confirm
-	form        formModal          // add host
+	form        formModal          // add/edit host
 	settingsIC  *widget.Icon
 	hostsIC     *widget.Icon
 	dropIC      *widget.Icon
@@ -94,7 +106,7 @@ func (s *state) reload() {
 	s.hosts = hosts
 	if len(s.hostDelBtns) != len(hosts) {
 		s.hostDelBtns = make([]widget.Clickable, len(hosts))
-		s.hostImgBtns = make([]widget.Clickable, len(hosts))
+		s.hostEditBtns = make([]widget.Clickable, len(hosts))
 	}
 	if len(hosts) == 0 {
 		s.status = s.t("status.empty")
@@ -161,6 +173,12 @@ func (s *state) handle(gtx layout.Context) {
 	if s.form.save.Clicked(gtx) {
 		s.saveHost()
 	}
+	if s.authPassBtn.Clicked(gtx) {
+		s.authKind = authPassword
+	}
+	if s.authKeyBtn.Clicked(gtx) {
+		s.authKind = authKey
+	}
 	if s.moshBox.Update(gtx) {
 		s.settings.Mosh = s.moshBox.Value
 		_ = sshrapp.SaveSettings(s.settings)
@@ -175,11 +193,11 @@ func (s *state) handle(gtx layout.Context) {
 		if i >= len(s.hosts) {
 			break
 		}
+		if i < len(s.hostEditBtns) && s.hostEditBtns[i].Clicked(gtx) {
+			s.openEditForm(s.hosts[i])
+		}
 		if s.hostDelBtns[i].Clicked(gtx) {
 			s.openDeleteConfirm(s.hosts[i])
-		}
-		if i < len(s.hostImgBtns) && s.hostImgBtns[i].Clicked(gtx) {
-			s.startUpload(s.hosts[i])
 		}
 	}
 	s.finishUploads(gtx)
@@ -242,6 +260,11 @@ func (s *state) clearForm() {
 	s.hostEd.SetText("")
 	s.userEd.SetText("")
 	s.portEd.SetText("22")
+	s.keyEd.SetText("")
+	s.passEd.SetText("")
+	s.passEd.Mask = '•'
+	s.authKind = authPassword
+	s.form.editID = ""
 }
 
 func (s *state) mapErr(err error) string {
@@ -269,14 +292,47 @@ func (s *state) saveHost() {
 		}
 		port = n
 	}
-	h, err := s.store.Add(s.nameEd.Text(), s.hostEd.Text(), s.userEd.Text(), "", port)
+	key := ""
+	password := ""
+	if s.authKind == authKey {
+		key = strings.TrimSpace(s.keyEd.Text())
+		if key == "" {
+			s.form.err = s.t("err.key_required")
+			return
+		}
+		key = sshrapp.ExpandHome(key)
+		if err := sshrapp.CheckPrivateKey(key); err != nil {
+			s.form.err = err.Error()
+			return
+		}
+	} else {
+		password = strings.TrimSpace(s.passEd.Text())
+		if password == "" {
+			s.form.err = s.t("err.password_required")
+			return
+		}
+	}
+	var (
+		h   *sshrapp.Host
+		err error
+	)
+	if s.form.editID != "" {
+		h, err = s.store.Update(s.form.editID, s.nameEd.Text(), s.hostEd.Text(), s.userEd.Text(), key, password, port)
+	} else {
+		h, err = s.store.Add(s.nameEd.Text(), s.hostEd.Text(), s.userEd.Text(), key, password, port)
+	}
 	if err != nil {
 		s.form.err = s.mapErr(err)
 		return
 	}
+	edited := s.form.editID != ""
 	s.form.close()
 	s.clearForm()
 	s.err = ""
 	s.reload()
-	s.status = s.t("status.added", h.Name)
+	if edited {
+		s.status = s.t("status.updated", h.Name)
+	} else {
+		s.status = s.t("status.added", h.Name)
+	}
 }

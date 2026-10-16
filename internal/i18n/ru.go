@@ -8,6 +8,7 @@ var ru = map[string]string{
 	"status.empty": "хостов пока нет",
 	"status.count": "хостов: %d",
 	"status.added":   "добавлен: %s",
+	"status.updated": "обновлён: %s",
 	"status.deleted": "удалён: %s",
 	"status.uploading": "отправляю картинку на %s…",
 	"status.uploaded":  "картинка на %s, путь к ней в буфере обмена",
@@ -17,8 +18,8 @@ var ru = map[string]string{
 	"btn.add":      "Добавить",
 	"btn.save":     "Сохранить",
 	"btn.cancel":   "Отмена",
+	"btn.edit":     "Изменить",
 	"btn.delete":   "Удалить",
-	"btn.sendImage": "Отправить картинку",
 	"btn.settings": "Настройки",
 	"btn.back":     "Назад",
 	"nav.hosts":    "Серверы",
@@ -26,11 +27,20 @@ var ru = map[string]string{
 	"modal.delete.title": "Удалить сервер?",
 	"modal.delete.body":  "«%s» будет удалён из списка. Это нельзя отменить.",
 	"modal.add.title":    "Добавить сервер",
+	"modal.edit.title":   "Изменить сервер",
 
 	"field.name": "Имя",
 	"field.host": "Хост / IP",
 	"field.user": "Пользователь",
 	"field.port": "Порт",
+	"field.key":      "Путь к ключу",
+	"field.password": "Пароль",
+	"field.auth":     "Аутентификация",
+
+	"auth.password": "Пароль",
+	"auth.key":      "Файл ключа",
+	"auth.password.short": "пароль",
+	"auth.key.short":      "ключ",
 
 	"settings.title":    "Настройки",
 	"settings.language": "Язык интерфейса",
@@ -39,7 +49,7 @@ var ru = map[string]string{
 	"settings.mosh.hint":  "Сеанс не рвётся при смене сети и сне ноутбука, набранное видно сразу даже на медленной связи. Нужен mosh на этом компьютере, а на сервере — mosh-server и открытые UDP-порты 60000–61000. Нет проброса портов, нет прокрутки без tmux, не показываются картинки в терминале, не работает на Windows. Если mosh не поднялся, sshr подключится обычным ssh.",
 
 	"sidebar.hosts.title": "Серверы",
-	"sidebar.hosts.hint":  "Список и фильтры — сюда",
+	"sidebar.hosts.main":  "Выбери сервер слева или добавь новый",
 	"sidebar.about":       "About",
 
 	"err.noImage":       "в буфере обмена нет картинки",
@@ -47,4 +57,6 @@ var ru = map[string]string{
 	"err.user_required": "user обязателен",
 	"err.port_invalid":  "порт кривой",
 	"err.not_found":     "не найден",
+	"err.key_required":      "укажи путь к ключу",
+	"err.password_required": "укажи пароль",
 }

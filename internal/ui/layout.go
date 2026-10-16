@@ -10,9 +10,9 @@ import (
 func layoutFrame(gtx layout.Context, th *material.Theme, s *state) layout.Dimensions {
 	iconBarW := float32(gtx.Dp(unit.Dp(56)))
 	if s.sidebarW == 0 {
-		s.sidebarW = float32(gtx.Dp(unit.Dp(200)))
+		s.sidebarW = float32(gtx.Dp(unit.Dp(260)))
 	}
-	minW := float32(gtx.Dp(unit.Dp(200)))
+	minW := float32(gtx.Dp(unit.Dp(220)))
 	// Leave room for main content + fixed icon bar.
 	maxW := float32(gtx.Constraints.Max.X) - float32(gtx.Dp(unit.Dp(280))) - iconBarW
 	if maxW < minW {
@@ -79,7 +79,7 @@ func layoutMain(gtx layout.Context, th *material.Theme, s *state) layout.Dimensi
 				case screenSettings:
 					return layoutSettings(gtx, th, s)
 				default:
-					return layoutHosts(gtx, th, s)
+					return layoutHostsMain(gtx, th, s)
 				}
 			}),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {

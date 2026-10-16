@@ -13,7 +13,7 @@ import (
 	"gioui.org/widget/material"
 )
 
-// layoutSidebar content depends on screen: hosts hint + Add, or settings nav.
+// layoutSidebar content depends on screen: hosts list + Add, or settings nav.
 func layoutSidebar(gtx layout.Context, th *material.Theme, s *state) layout.Dimensions {
 	w := int(s.sidebarW + 0.5)
 	h := gtx.Constraints.Max.Y
@@ -43,15 +43,11 @@ func layoutSidebarHosts(gtx layout.Context, th *material.Theme, s *state) layout
 			t.Color = colFG
 			return t.Layout(gtx)
 		}),
-		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
-		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			l := material.Caption(th, s.t("sidebar.hosts.hint"))
-			l.Color = colMuted
-			return l.Layout(gtx)
-		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			return layout.Dimensions{Size: gtx.Constraints.Min}
+			return layoutHostsList(gtx, th, s)
 		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			btn := material.Button(th, &s.addBtn, s.t("btn.add"))
 			btn.Background = colAccent

@@ -14,11 +14,16 @@ import (
 // to be read once (by a person or a remote tool), not stored there.
 const UploadTTL = 15 * time.Minute
 
-// SSHArgs returns the ssh options for a host: key and port.
+// SSHArgs returns the ssh options for a host: key, password prefs, and port.
 func SSHArgs(h *Host) []string {
 	args := []string{}
 	if h.Key != "" {
 		args = append(args, "-i", h.Key)
+	} else if h.Password != "" {
+		args = append(args,
+			"-o", "PreferredAuthentications=password",
+			"-o", "PubkeyAuthentication=no",
+		)
 	}
 	return append(args, "-p", strconv.Itoa(h.Port))
 }
@@ -63,6 +68,8 @@ func UploadImage(h *Host, data []byte, ext string, batch bool) (string, error) {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	cleanup := AttachPasswordAuth(cmd, h)
+	defer cleanup()
 	err := cmd.Run()
 	remote := strings.TrimSpace(stdout.String())
 	if err == nil && strings.HasPrefix(remote, "/") {

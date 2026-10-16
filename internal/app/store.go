@@ -42,7 +42,8 @@ func (e *AmbiguousError) Error() string {
 	return fmt.Sprintf("%q matches %d hosts", e.Query, len(e.Hosts))
 }
 
-// Host is one SSH target. Passwords are not stored here.
+// Host is one SSH target. Password is stored in the local vault (0600);
+// prefer a key when you can.
 type Host struct {
 	ID        string    `json:"id"`
 	Name      string    `json:"name"`
@@ -50,6 +51,7 @@ type Host struct {
 	Port      int       `json:"port"`
 	User      string    `json:"user"`
 	Key       string    `json:"key,omitempty"`
+	Password  string    `json:"password,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -71,7 +73,7 @@ func DefaultStore() (*Store, error) {
 	return &Store{Dir: dir}, nil
 }
 
-func (s *Store) Add(name, host, user, key string, port int) (*Host, error) {
+func (s *Store) Add(name, host, user, key, password string, port int) (*Host, error) {
 	name = strings.TrimSpace(name)
 	host = strings.TrimSpace(host)
 	user = strings.TrimSpace(user)
@@ -99,6 +101,10 @@ func (s *Store) Add(name, host, user, key string, port int) (*Host, error) {
 		return nil, err
 	}
 	key = strings.TrimSpace(key)
+	password = strings.TrimSpace(password)
+	if key != "" {
+		password = ""
+	}
 	h := &Host{
 		ID:        id,
 		Name:      name,
@@ -106,6 +112,7 @@ func (s *Store) Add(name, host, user, key string, port int) (*Host, error) {
 		Port:      port,
 		User:      user,
 		Key:       key,
+		Password:  password,
 		CreatedAt: time.Now().UTC(),
 	}
 	if err := s.save(h); err != nil {
@@ -195,6 +202,58 @@ func (s *Store) Delete(id string) error {
 		return err
 	}
 	return nil
+}
+
+// Update rewrites an existing host; CreatedAt is kept.
+func (s *Store) Update(id, name, host, user, key, password string, port int) (*Host, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, ErrNotFound
+	}
+	cur, err := s.Find(id)
+	if err != nil {
+		return nil, err
+	}
+	name = strings.TrimSpace(name)
+	host = strings.TrimSpace(host)
+	user = strings.TrimSpace(user)
+	if host == "" {
+		return nil, ErrHostEmpty
+	}
+	if strings.HasPrefix(host, "-") {
+		return nil, fmt.Errorf("host must not start with '-': %s", host)
+	}
+	if user == "" {
+		return nil, ErrUserRequired
+	}
+	if name == "" {
+		name = host
+	}
+	if port == 0 {
+		port = 22
+	}
+	if port < 1 || port > 65535 {
+		return nil, ErrPortInvalid
+	}
+	key = strings.TrimSpace(key)
+	password = strings.TrimSpace(password)
+	if key != "" {
+		password = ""
+	}
+	h := &Host{
+		ID:        cur.ID,
+		Name:      name,
+		Host:      host,
+		Port:      port,
+		User:      user,
+		Key:       key,
+		Password:  password,
+		CreatedAt: cur.CreatedAt,
+	}
+	if err := s.save(h); err != nil {
+		return nil, err
+	}
+	return h, nil
 }
 
 func (s *Store) save(h *Host) error {

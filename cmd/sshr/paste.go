@@ -44,7 +44,7 @@ func cmdPaste(store *app.Store, args []string) {
 
 	var img *clip.Image
 	if file != "" {
-		data, err := os.ReadFile(expandHome(file))
+		data, err := os.ReadFile(app.ExpandHome(file))
 		if err != nil {
 			fatal(err)
 		}

@@ -8,6 +8,7 @@ var en = map[string]string{
 	"status.empty": "no hosts yet",
 	"status.count": "hosts: %d",
 	"status.added":   "added: %s",
+	"status.updated": "updated: %s",
 	"status.deleted": "deleted: %s",
 	"status.uploading": "sending image to %s…",
 	"status.uploaded":  "image is on %s, its path is in the clipboard",
@@ -17,8 +18,8 @@ var en = map[string]string{
 	"btn.add":      "Add host",
 	"btn.save":     "Save",
 	"btn.cancel":   "Cancel",
+	"btn.edit":     "Edit",
 	"btn.delete":   "Delete",
-	"btn.sendImage": "Send image",
 	"btn.settings": "Settings",
 	"btn.back":     "Back",
 	"nav.hosts":    "Servers",
@@ -26,11 +27,20 @@ var en = map[string]string{
 	"modal.delete.title": "Delete server?",
 	"modal.delete.body":  "“%s” will be removed from the list. This cannot be undone.",
 	"modal.add.title":    "Add server",
+	"modal.edit.title":   "Edit server",
 
 	"field.name": "Name",
 	"field.host": "Host / IP",
 	"field.user": "User",
 	"field.port": "Port",
+	"field.key":      "Key path",
+	"field.password": "Password",
+	"field.auth":     "Authentication",
+
+	"auth.password": "Password",
+	"auth.key":      "Key file",
+	"auth.password.short": "password",
+	"auth.key.short":      "key",
 
 	"settings.title":    "Settings",
 	"settings.language": "Interface language",
@@ -39,7 +49,7 @@ var en = map[string]string{
 	"settings.mosh.hint":  "Keeps the session alive when the network changes or the laptop sleeps, and shows typing instantly on a slow link. Needs mosh on this computer and mosh-server plus open UDP 60000–61000 on the server. No port forwarding, no scrollback without tmux, no terminal images, not on Windows. If mosh fails to start, sshr falls back to plain ssh.",
 
 	"sidebar.hosts.title": "Servers",
-	"sidebar.hosts.hint":  "List and filters go here",
+	"sidebar.hosts.main":  "Pick a server on the left or add a new one",
 	"sidebar.about":       "About",
 
 	"err.noImage":       "no image in the clipboard",
@@ -47,4 +57,6 @@ var en = map[string]string{
 	"err.user_required": "user is required",
 	"err.port_invalid":  "invalid port",
 	"err.not_found":     "not found",
+	"err.key_required":      "key path is required",
+	"err.password_required": "password is required",
 }

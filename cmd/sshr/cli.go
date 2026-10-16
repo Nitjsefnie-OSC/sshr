@@ -120,23 +120,28 @@ func cmdAdd(store *app.Store, args []string) {
 		fmt.Fprintln(os.Stderr, "sshr add: -k and --no-key cannot be used together")
 		os.Exit(1)
 	}
+	var password string
 	if key != "" {
-		expanded := expandHome(key)
-		if err := checkKeyFile(expanded); err != nil {
+		expanded := app.ExpandHome(key)
+		if err := app.CheckPrivateKey(expanded); err != nil {
 			fmt.Fprintf(os.Stderr, "sshr add: %v\n", err)
 			os.Exit(1)
 		}
 		key = expanded
 	} else if !noKey {
-		key = promptAuthMethod()
+		key, password = promptAuthMethod()
+	} else {
+		password = promptPassword()
 	}
-	h, err := store.Add(name, host, user, key, port)
+	h, err := store.Add(name, host, user, key, password, port)
 	if err != nil {
 		fatal(err)
 	}
 	msg := fmt.Sprintf("Added %s (%s@%s:%d)", h.Name, h.User, h.Host, h.Port)
 	if h.Key != "" {
 		msg += fmt.Sprintf(" key=%s", h.Key)
+	} else if h.Password != "" {
+		msg += " auth=password"
 	}
 	fmt.Println(msg)
 }
@@ -204,7 +209,7 @@ func cmdConnect(store *app.Store, args []string) {
 		fatal(fmt.Errorf("ssh not found in PATH"))
 	}
 	fmt.Printf("Connecting to %s (%s:%d)...\n", h.Name, dest, h.Port)
-	os.Exit(run(sshBin, append(sshOpts, "--", dest)...))
+	os.Exit(run(h, sshBin, append(sshOpts, "--", dest)...))
 }
 
 // moshStartup is how long a failing mosh run still counts as "could not
@@ -226,7 +231,7 @@ func runMosh(h *app.Host, sshOpts []string, dest string) (code int, ok bool) {
 	}
 	fmt.Printf("Connecting to %s (%s:%d) with mosh...\n", h.Name, dest, h.Port)
 	started := time.Now()
-	code = run(moshBin, "--ssh=ssh "+strings.Join(sshOpts, " "), "--", dest)
+	code = run(h, moshBin, "--ssh=ssh "+strings.Join(sshOpts, " "), "--", dest)
 	if code != 0 && time.Since(started) < moshStartup {
 		fmt.Fprintln(os.Stderr, "sshr: mosh did not start, falling back to ssh")
 		return 0, false
@@ -235,11 +240,13 @@ func runMosh(h *app.Host, sshOpts []string, dest string) (code int, ok bool) {
 }
 
 // run starts a terminal program attached to ours and returns its exit code.
-func run(bin string, args ...string) int {
+func run(h *app.Host, bin string, args ...string) int {
 	cmd := exec.Command(bin, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	cleanup := app.AttachPasswordAuth(cmd, h)
+	defer cleanup()
 	if err := cmd.Run(); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -271,27 +278,39 @@ Usage:
   sshr help                         show this help`)
 }
 
-func promptAuthMethod() string {
+func promptAuthMethod() (key, password string) {
 	scanner := bufio.NewScanner(os.Stdin)
 	fmt.Println("\nAuthentication method:")
 	fmt.Println("  [1] Specify private key path")
 	fmt.Println("  [2] Find key automatically (~/.ssh/)")
-	fmt.Println("  [3] Password (no key)")
+	fmt.Println("  [3] Password")
 	fmt.Print("\nChoice [1/2/3]: ")
 
 	choice := readAnswer(scanner)
 	switch choice {
 	case "1":
-		return promptKeyPath(scanner)
+		return promptKeyPath(scanner), ""
 	case "2":
-		return pickFromSSHKeys(scanner)
+		return pickFromSSHKeys(scanner), ""
 	case "3":
-		return ""
+		return "", promptPassword()
 	default:
 		fmt.Fprintf(os.Stderr, "\nsshr add: invalid choice %q\n", choice)
 		os.Exit(1)
-		return ""
+		return "", ""
 	}
+}
+
+func promptPassword() string {
+	fmt.Print("Password: ")
+	// Visible on purpose when term package is not used; vault file is 0600.
+	scanner := bufio.NewScanner(os.Stdin)
+	pw := readAnswer(scanner)
+	if pw == "" {
+		fmt.Fprintln(os.Stderr, "sshr add: empty password")
+		os.Exit(1)
+	}
+	return pw
 }
 
 // readAnswer reads one line of a prompt. With no input to read (stdin
@@ -312,8 +331,8 @@ func promptKeyPath(scanner *bufio.Scanner) string {
 		fmt.Fprintln(os.Stderr, "sshr add: empty key path")
 		os.Exit(1)
 	}
-	expanded := expandHome(path)
-	if err := checkKeyFile(expanded); err != nil {
+	expanded := app.ExpandHome(path)
+	if err := app.CheckPrivateKey(expanded); err != nil {
 		fmt.Fprintf(os.Stderr, "sshr add: %v\n", err)
 		os.Exit(1)
 	}
@@ -367,45 +386,12 @@ func findSSHKeys() []string {
 			continue
 		}
 		path := filepath.Join(sshDir, name)
-		if checkKeyFile(path) != nil {
+		if app.CheckPrivateKey(path) != nil {
 			continue
 		}
 		keys = append(keys, path)
 	}
 	return keys
-}
-
-// checkKeyFile accepts a small file with a "PRIVATE KEY" header (OpenSSH
-// and PEM formats), so a public key or a wrong path fails at add, not later
-// at connect.
-func checkKeyFile(path string) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("key file not found: %s", path)
-	}
-	if !info.Mode().IsRegular() || info.Size() == 0 || info.Size() > 16384 {
-		return fmt.Errorf("not a private key file: %s", path)
-	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	if !strings.Contains(string(b), "PRIVATE KEY") {
-		if strings.HasSuffix(path, ".pub") {
-			return fmt.Errorf("%s is a public key; pass the file without .pub", path)
-		}
-		return fmt.Errorf("not a private key file: %s", path)
-	}
-	return nil
-}
-
-func expandHome(path string) string {
-	if strings.HasPrefix(path, "~/") {
-		if home, err := os.UserHomeDir(); err == nil {
-			return filepath.Join(home, path[2:])
-		}
-	}
-	return path
 }
 
 // findFailed reports a failed Find and exits; on ambiguity it lists the
