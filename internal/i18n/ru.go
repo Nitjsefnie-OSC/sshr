@@ -41,6 +41,10 @@ var ru = map[string]string{
 	"session.off":         "Обычную оболочку",
 	"field.forwards":      "Пробросы портов (необязательно)",
 	"field.forwards.hint": "По одному в строке: имя -L порт:хост:порт, -R в обратную сторону, -D порт для SOCKS, открыть через sshr connect -F имя или sshr tunnel",
+	"field.tags":          "Теги",
+	"field.tags.hint":     "Через пробел или запятую: prod, db, client-x, в поиске #prod или tag:prod",
+	"search.hint":         "Поиск: имя, адрес, пользователь, #тег",
+	"list.noMatch":        "Под поиск ничего не подходит",
 	"field.jump.hint":     "Сначала зайти на другой сервер: имя сохранённого хоста или user@host:port, несколько через a,b",
 	"field.auth":          "Аутентификация",
 

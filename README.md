@@ -31,6 +31,17 @@ sshr connect web
 sshr rm web
 ```
 
+## Tags and search
+
+```sh
+sshr add 10.0.0.7 -u app -n web -t prod,web
+sshr tag web +eu -web          # add eu, remove web
+sshr list prod                 # name, address, user or tag contains "prod"
+sshr list '#prod' db           # exact tag prod and "db" anywhere
+```
+
+App: **Tags** in the host form, the search field above the list takes the same words. Tags sync with the hosts
+
 ## Importing ~/.ssh/config
 
 ```sh

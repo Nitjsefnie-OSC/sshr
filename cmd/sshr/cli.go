@@ -53,6 +53,8 @@ func runCLI(args []string) {
 		cmdList(store, args[1:])
 	case "ping":
 		cmdPing(store, args[1:])
+	case "tag":
+		cmdTag(store, args[1:])
 	case "add":
 		cmdAdd(store, args[1:])
 	case "rm", "remove":
@@ -101,24 +103,32 @@ func runCLI(args []string) {
 func cmdList(store *app.Store, args []string) {
 	st, _ := app.LoadSettings()
 	ping := st.HealthCheck
+	var query []string
 	for _, a := range args {
-		switch a {
-		case "--ping":
+		switch {
+		case a == "--ping":
 			ping = true
-		case "--no-ping":
+		case a == "--no-ping":
 			ping = false
-		default:
-			fmt.Fprintln(os.Stderr, "Usage: sshr list [--ping|--no-ping]")
+		case strings.HasPrefix(a, "-"):
+			fmt.Fprintln(os.Stderr, "Usage: sshr list [--ping|--no-ping] [search words, tag:x or #x]")
 			os.Exit(1)
+		default:
+			query = append(query, a)
 		}
 	}
-	hosts, err := store.List()
+	all, err := store.List()
 	if err != nil {
 		fatal(err)
 	}
-	if len(hosts) == 0 {
+	if len(all) == 0 {
 		fmt.Println("No hosts. Use `sshr add` to add one.")
 		return
+	}
+	hosts := app.Filter(all, strings.Join(query, " "))
+	if len(hosts) == 0 {
+		fmt.Printf("No hosts match %q\n", strings.Join(query, " "))
+		os.Exit(1)
 	}
 	var health map[string]app.Health
 	if ping {
@@ -128,7 +138,7 @@ func cmdList(store *app.Store, args []string) {
 	if ping {
 		fmt.Fprint(w, "STATUS\t")
 	}
-	fmt.Fprintln(w, "NAME\tHOST\tUSER\tPORT\tAUTH\tID")
+	fmt.Fprintln(w, "NAME\tHOST\tUSER\tPORT\tAUTH\tTAGS\tID")
 	for _, h := range hosts {
 		keyCol := "-"
 		switch {
@@ -154,7 +164,11 @@ func cmdList(store *app.Store, args []string) {
 		if ping {
 			fmt.Fprint(w, health[h.ID].Label()+"\t")
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\n", h.Name, h.Host, h.User, h.Port, keyCol, id)
+		tagCol := strings.Join(h.Tags, ",")
+		if tagCol == "" {
+			tagCol = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\t%s\n", h.Name, h.Host, h.User, h.Port, keyCol, tagCol, id)
 	}
 	w.Flush()
 }
@@ -169,6 +183,7 @@ func cmdAdd(store *app.Store, args []string) {
 	// --agent-key picks one of its keys
 	var agentName, agentKey string
 	useAgent := false
+	var tags []string
 	port := 22
 	positional := make([]string, 0)
 
@@ -192,6 +207,11 @@ func cmdAdd(store *app.Store, args []string) {
 		} else if a == "--session" && i+1 < len(args) {
 			i++
 			session = args[i]
+		} else if strings.HasPrefix(a, "--tag=") {
+			tags = append(tags, app.SplitTags(strings.SplitN(a, "=", 2)[1])...)
+		} else if (a == "-t" || a == "--tag") && i+1 < len(args) {
+			i++
+			tags = append(tags, app.SplitTags(args[i])...)
 		} else if a == "--no-key" {
 			noKey = true
 		} else if a == "--ask-password" {
@@ -315,7 +335,7 @@ func cmdAdd(store *app.Store, args []string) {
 		Key: key, KeyData: keyData, KeyMode: keyMode, KeyRef: keyRef,
 		Agent: agentName, AgentKey: agentKey,
 		PasswordMode: passwordMode, Password: password, PasswordRef: passwordRef,
-		Jump: jump, Session: session,
+		Jump: jump, Session: session, Tags: tags,
 	}
 	h, err := store.Add(in)
 	if errors.Is(err, app.ErrKeyPassphrase) {
@@ -571,16 +591,22 @@ func printUsage() {
 
 Usage:
   sshr                              open GUI
-  sshr list [--ping|--no-ping]      list saved hosts, --ping adds whether
-                                    each answers (on by default with the
-                                    health_check setting)
+  sshr list [--ping|--no-ping] [search...]
+                                    list saved hosts, words filter by
+                                    name, address, user and tags, tag:x
+                                    or #x needs the exact tag, --ping
+                                    adds whether each answers (on by
+                                    default with health_check)
+  sshr tag <name or id> [+tag|-tag|tag...]
+                                    show, add (+ or bare) or remove (-)
+                                    tags of a host
   sshr ping [name or id...]         check whether hosts answer: TCP connect
                                     time and the SSH banner, no login,
                                     exits 1 when one is down
   sshr add <host> -u <user> [-n <name>] [-p <port>]
            [-k <key> | --key-stdin | --agent [name] | --no-key | --ask-password]
            [-J <jump>]
-           [--session tmux|zellij]
+           [--session tmux|zellij] [-t <tags>]
                                     add a host (asks for the auth method
                                     unless -k, --no-key or --ask-password
                                     is given), --no-key saves a password
@@ -1052,4 +1078,39 @@ func cmdDesktopEntry(args []string) {
 		fmt.Fprintln(os.Stderr, "Usage: sshr desktop-entry [--remove]")
 		os.Exit(1)
 	}
+}
+
+// cmdTag shows a host's tags or changes them: +x or x adds, -x removes
+func cmdTag(store *app.Store, args []string) {
+	if len(args) < 1 {
+		fmt.Fprintln(os.Stderr, "Usage: sshr tag <name or id> [+tag|-tag|tag...]")
+		os.Exit(1)
+	}
+	h := findHost(store, "tag", args[0])
+	if len(args) == 1 {
+		fmt.Println(strings.Join(h.Tags, " "))
+		return
+	}
+	tags := append([]string(nil), h.Tags...)
+	for _, a := range args[1:] {
+		if t, ok := strings.CutPrefix(a, "-"); ok {
+			t = strings.ToLower(strings.TrimPrefix(t, "#"))
+			kept := tags[:0]
+			for _, x := range tags {
+				if x != t {
+					kept = append(kept, x)
+				}
+			}
+			tags = kept
+			continue
+		}
+		tags = append(tags, app.SplitTags(strings.TrimPrefix(a, "+"))...)
+	}
+	in := *h
+	in.Tags = tags
+	saved, err := store.Update(h.ID, in)
+	if err != nil {
+		fatal(err)
+	}
+	fmt.Printf("%s: %s\n", saved.Name, strings.Join(saved.Tags, " "))
 }

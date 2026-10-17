@@ -108,7 +108,9 @@ type Host struct {
 	Session string `json:"session,omitempty"`
 	// Forwards are named port forwards, started with connect -F or as a
 	// tunnel with sshr tunnel
-	Forwards  []Forward `json:"forwards,omitempty"`
+	Forwards []Forward `json:"forwards,omitempty"`
+	// Tags group hosts (prod, db, client-x), lower case, sorted
+	Tags      []string  `json:"tags,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -258,6 +260,9 @@ func cleanHost(h Host) (Host, error) {
 		return h, err
 	}
 	if err := checkForwards(h.Forwards); err != nil {
+		return h, err
+	}
+	if h.Tags, err = CleanTags(h.Tags); err != nil {
 		return h, err
 	}
 	return h, nil

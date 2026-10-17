@@ -42,6 +42,10 @@ var en = map[string]string{
 	"session.off":         "Plain shell",
 	"field.forwards":      "Port forwards (optional)",
 	"field.forwards.hint": "One per line: name -L port:host:port, -R for the other direction, -D port for SOCKS, open with sshr connect -F name or sshr tunnel",
+	"field.tags":          "Tags",
+	"field.tags.hint":     "Words or commas: prod, db, client-x, search the list with #prod or tag:prod",
+	"search.hint":         "Search: name, address, user, #tag",
+	"list.noMatch":        "No hosts match the search",
 	"field.jump.hint":     "Go through another server first: a saved host name or user@host:port, several as a,b",
 
 	"auth.password":       "Password",

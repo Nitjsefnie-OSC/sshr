@@ -12,6 +12,7 @@ type HostSummary struct {
 	Jump     string   `json:"jump,omitempty"`
 	Session  string   `json:"session,omitempty"`
 	Forwards []string `json:"forwards,omitempty"`
+	Tags     []string `json:"tags,omitempty"`
 }
 
 // AuthLabel says in words how h logs in
@@ -37,7 +38,7 @@ func (h *Host) AuthLabel() string {
 
 // Summary is h without its secrets
 func (h *Host) Summary() HostSummary {
-	sum := HostSummary{Name: h.Name, ID: h.ID, Address: h.Host, User: h.User, Port: h.Port, Auth: h.AuthLabel(), Jump: h.Jump, Session: h.Session}
+	sum := HostSummary{Name: h.Name, ID: h.ID, Address: h.Host, User: h.User, Port: h.Port, Auth: h.AuthLabel(), Jump: h.Jump, Session: h.Session, Tags: h.Tags}
 	for _, f := range h.Forwards {
 		sum.Forwards = append(sum.Forwards, f.String())
 	}

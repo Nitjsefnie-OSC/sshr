@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"strings"
 
 	"gioui.org/layout"
 	"gioui.org/op/clip"
@@ -105,6 +106,7 @@ func (s *state) openEditForm(h sshrapp.Host) {
 	}
 	s.passEd.Mask = '•'
 	s.jumpEd.SetText(h.Jump)
+	s.tagsEd.SetText(strings.Join(h.Tags, " "))
 	s.session = h.Session
 	s.fwdEd.SetText(sshrapp.FormatForwards(h.Forwards))
 	s.form.editID = h.ID

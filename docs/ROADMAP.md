@@ -9,6 +9,7 @@ Connecting
 - connect and session workflows on top of system ssh ([#7](https://github.com/klovbin/sshr/issues/7)): jump hosts with saved hops and chains ([#8](https://github.com/klovbin/sshr/issues/8)), attach to tmux or zellij ([#9](https://github.com/klovbin/sshr/issues/9)), named port forwards and `sshr tunnel` ([#10](https://github.com/klovbin/sshr/issues/10)), connection reuse with `ControlMaster`, off by default ([#11](https://github.com/klovbin/sshr/issues/11)), mosh, off by default
 - clipboard images to a server with `sshr paste` and from the app
 - whether a host answers: `sshr ping`, `sshr list --ping`, a dot in the app, off by default
+- tags and search in the CLI and the app ([#31](https://github.com/klovbin/sshr/issues/31))
 
 Passwords and keys
 
@@ -47,19 +48,18 @@ Needed before a release
 Features
 
 4. Bitwarden for passwords and keys, like 1Password ([#20](https://github.com/klovbin/sshr/issues/20))
-5. Tags and search ([#31](https://github.com/klovbin/sshr/issues/31))
-6. Copy files to and from a host, `sshr send` and `sshr get` ([#32](https://github.com/klovbin/sshr/issues/32))
-7. Run a command on many hosts by tag ([#33](https://github.com/klovbin/sshr/issues/33))
-8. Fall back to a gateway when the direct connection fails ([#28](https://github.com/klovbin/sshr/issues/28))
-9. Local commands before and after connect, their fields go on the #30 list ([#29](https://github.com/klovbin/sshr/issues/29))
-10. Import from PuTTY, MobaXterm, Remmina, Termius, Royal TS, through the #30 list ([#34](https://github.com/klovbin/sshr/issues/34))
+5. Copy files to and from a host, `sshr send` and `sshr get` ([#32](https://github.com/klovbin/sshr/issues/32))
+6. Run a command on many hosts by tag ([#33](https://github.com/klovbin/sshr/issues/33))
+7. Fall back to a gateway when the direct connection fails ([#28](https://github.com/klovbin/sshr/issues/28))
+8. Local commands before and after connect, their fields go on the #30 list ([#29](https://github.com/klovbin/sshr/issues/29))
+9. Import from PuTTY, MobaXterm, Remmina, Termius, Royal TS, through the #30 list ([#34](https://github.com/klovbin/sshr/issues/34))
 
 Later
 
-11. sshr on iOS and Android, ssh in process, keys in the phone's keystore, joins sync like any device ([#25](https://github.com/klovbin/sshr/issues/25))
-12. Sync: automatic background sync, a paper recovery key, pairing by QR code
-13. Sync without a server: device to device over the local network or the user's own WireGuard tunnel, TLS 1.3 with device keys pinned at pairing
-14. Optional hardware keys (YubiKey, FIDO2 `ed25519-sk`), not required
+10. sshr on iOS and Android, ssh in process, keys in the phone's keystore, joins sync like any device ([#25](https://github.com/klovbin/sshr/issues/25))
+11. Sync: automatic background sync, a paper recovery key, pairing by QR code
+12. Sync without a server: device to device over the local network or the user's own WireGuard tunnel, TLS 1.3 with device keys pinned at pairing
+13. Optional hardware keys (YubiKey, FIDO2 `ed25519-sk`), not required
 
 ## Not planned
 

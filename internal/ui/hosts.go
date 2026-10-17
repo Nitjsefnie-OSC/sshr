@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"gioui.org/layout"
 	"gioui.org/text"
@@ -16,7 +17,11 @@ import (
 // layoutHostsList renders hosts in the left Servers sidebar.
 func layoutHostsList(gtx layout.Context, th *material.Theme, s *state) layout.Dimensions {
 	if len(s.hosts) == 0 {
-		empty := material.Caption(th, s.t("list.empty"))
+		msg := s.t("list.empty")
+		if len(s.allHosts) > 0 {
+			msg = s.t("list.noMatch")
+		}
+		empty := material.Caption(th, msg)
 		empty.Color = colMuted
 		return empty.Layout(gtx)
 	}
@@ -72,6 +77,15 @@ func layoutHostsList(gtx layout.Context, th *material.Theme, s *state) layout.Di
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					sub := material.Caption(th, authLabel)
 					sub.Color = colMutedSoft
+					sub.MaxLines = 1
+					return sub.Layout(gtx)
+				}),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					if len(h.Tags) == 0 {
+						return layout.Dimensions{}
+					}
+					sub := material.Caption(th, "#"+strings.Join(h.Tags, " #"))
+					sub.Color = colAccent
 					sub.MaxLines = 1
 					return sub.Layout(gtx)
 				}),
@@ -207,6 +221,13 @@ func layoutForm(gtx layout.Context, th *material.Theme, s *state) layout.Dimensi
 		multilineField(th, s.t("field.forwards"), &s.fwdEd),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			hint := material.Caption(th, s.t("field.forwards.hint"))
+			hint.Color = colMuted
+			return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, hint.Layout)
+		}),
+		spacer(12),
+		field(th, s.t("field.tags"), &s.tagsEd),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			hint := material.Caption(th, s.t("field.tags.hint"))
 			hint.Color = colMuted
 			return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, hint.Layout)
 		}))

@@ -62,6 +62,8 @@ type state struct {
 	keyEd        widget.Editor
 	passEd       widget.Editor
 	jumpEd       widget.Editor
+	tagsEd       widget.Editor // "prod, db"
+	searchEd     widget.Editor // filters the host list
 	fwdEd        widget.Editor // one forward per line, "db -L 5432:localhost:5432"
 	authKind     authKind
 	authPassBtn  widget.Clickable
@@ -119,6 +121,11 @@ type state struct {
 	status string // soft status line under the title
 	err    string // list-level error (form errors live in form.err)
 
+	// allHosts is every saved host, hosts is what the search keeps of it,
+	// the row buttons follow hosts
+	allHosts   []sshrapp.Host
+	lastSearch string
+
 	// health holds the last check of each host by ID, nil while checks
 	// are off or the first one runs
 	health     map[string]sshrapp.Health
@@ -143,16 +150,23 @@ func (s *state) reload() {
 		s.err = err.Error()
 		return
 	}
-	s.hosts = hosts
+	s.allHosts = hosts
 	s.kickHealth()
-	if len(s.hostDelBtns) != len(hosts) {
-		s.hostDelBtns = make([]widget.Clickable, len(hosts))
-		s.hostEditBtns = make([]widget.Clickable, len(hosts))
-	}
+	s.applySearch()
 	if len(hosts) == 0 {
 		s.status = s.t("status.empty")
 	} else {
 		s.status = s.t("status.count", len(hosts))
+	}
+}
+
+// applySearch keeps the hosts that match the search field
+func (s *state) applySearch() {
+	s.lastSearch = s.searchEd.Text()
+	s.hosts = sshrapp.Filter(s.allHosts, s.lastSearch)
+	if len(s.hostDelBtns) != len(s.hosts) {
+		s.hostDelBtns = make([]widget.Clickable, len(s.hosts))
+		s.hostEditBtns = make([]widget.Clickable, len(s.hosts))
 	}
 }
 
@@ -278,6 +292,9 @@ func (s *state) handle(gtx layout.Context) {
 			s.openDeleteConfirm(s.hosts[i])
 		}
 	}
+	if s.searchEd.Text() != s.lastSearch {
+		s.applySearch()
+	}
 	s.finishUploads(gtx)
 	s.finishImport(gtx)
 	if s.importBtn.Clicked(gtx) {
@@ -349,6 +366,7 @@ func (s *state) clearForm() {
 	s.passEd.SetText("")
 	s.passEd.Mask = '•'
 	s.jumpEd.SetText("")
+	s.tagsEd.SetText("")
 	s.fwdEd.SetText("")
 	s.session = ""
 	s.authKind = authPassword
@@ -393,9 +411,9 @@ func (s *state) mapErr(err error) string {
 
 // editedHost is the saved host the form edits, nil for a new one
 func (s *state) editedHost() *sshrapp.Host {
-	for i := range s.hosts {
-		if s.form.editID != "" && s.hosts[i].ID == s.form.editID {
-			return &s.hosts[i]
+	for i := range s.allHosts {
+		if s.form.editID != "" && s.allHosts[i].ID == s.form.editID {
+			return &s.allHosts[i]
 		}
 	}
 	return nil
@@ -496,6 +514,7 @@ func (s *state) saveHost() {
 		Jump:          s.jumpEd.Text(),
 		Session:       s.session,
 		Forwards:      forwards,
+		Tags:          sshrapp.SplitTags(s.tagsEd.Text()),
 	}
 	if s.form.editID != "" {
 		h, err = s.store.Update(s.form.editID, in)

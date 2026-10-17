@@ -44,6 +44,14 @@ func layoutSidebarHosts(gtx layout.Context, th *material.Theme, s *state) layout
 			return t.Layout(gtx)
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(12)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			s.searchEd.SingleLine = true
+			s.searchEd.Submit = false
+			ed := material.Editor(th, &s.searchEd, s.t("search.hint"))
+			ed.HintColor = colMutedSoft
+			return ed.Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			return layoutHostsList(gtx, th, s)
 		}),
