@@ -400,28 +400,6 @@ Reading the clipboard uses tools the OS already has, so the binary needs no cgo:
 
 On Linux, install `wl-clipboard` or `xclip` if you don't have them. The same scheme already works in the author's terminal (MyCustomTerm).
 
-## Planned
+## Roadmap
 
-In the order we intend to build them (reasons in [docs/WHY.md](docs/WHY.md)):
-
-1. Real-server check of the CLI ([#17](https://github.com/klovbin/sshr/issues/17))
-2. Connect / session workflows on top of system SSH ([#16](https://github.com/klovbin/sshr/issues/16)):
-   - jump hosts via `ProxyJump` - done ([#19](https://github.com/klovbin/sshr/issues/19)),
-   - attach to tmux/zellij on connect - done ([#20](https://github.com/klovbin/sshr/issues/20)),
-   - saved port forwards per host - done ([#21](https://github.com/klovbin/sshr/issues/21)),
-   - connection reuse with `ControlMaster`/`ControlPersist`, off by default - done ([#22](https://github.com/klovbin/sshr/issues/22)),
-   - sending clipboard images to the server — done ([#26](https://github.com/klovbin/sshr/issues/26));
-   - mosh, off by default — done ([#23](https://github.com/klovbin/sshr/issues/23)).
-3. Password handling: saved encrypted with a key from the system keychain or asked every time - done ([#6](https://github.com/klovbin/sshr/issues/6)), keys stored inside sshr - done ([#12](https://github.com/klovbin/sshr/issues/12)), passwords and keys in 1Password - done ([#13](https://github.com/klovbin/sshr/issues/13)), keys from ssh agents including 1Password - done ([#5](https://github.com/klovbin/sshr/issues/5))
-4. Installer with OS detection and PATH setup, `install.sh` for Linux and macOS - done ([#2](https://github.com/klovbin/sshr/issues/2)), then packages for AUR, Homebrew, Scoop and nixpkgs ([#17](https://github.com/klovbin/sshr/issues/17))
-5. Sync with key services: 1Password, Bitwarden, ssh-agent - done ([#5](https://github.com/klovbin/sshr/issues/5), [#13](https://github.com/klovbin/sshr/issues/13))
-6. MCP server for AI assistants - done ([#4](https://github.com/klovbin/sshr/issues/4)), REST API for integrations - done ([#3](https://github.com/klovbin/sshr/issues/3))
-7. Sync across machines through our own sync server, end to end encrypted, the server stores only ciphertext - done ([#1](https://github.com/klovbin/sshr/issues/1)), automatic sync, recovery key and QR pairing later
-
-Not planned: Eternal Terminal (another server daemon for what tmux and mosh already cover) and autossh (meant for permanent tunnels, not interactive work).
-
-Future ideas:
-
-- Zero-knowledge sync with device-bound keys ([#10](https://github.com/klovbin/sshr/issues/10)) — the sync backend stores only ciphertext; each device keeps its own key pair (TPM where available) and the vault key is encrypted to every device, so there is no master password to brute-force; new devices are approved from an existing one by fingerprint / QR; paper recovery key; SSH private keys never leave their device
-- Sync transport for it: direct device-to-device with no server at all — local network or the user's own WireGuard tunnel, TLS 1.3 with mutual auth and device keys pinned at pairing; git / own server only as a later opt-in fallback
-- Optional hardware keys (YubiKey / FIDO2 `ed25519-sk`) — not required, buying a dedicated device just for sshr is a big ask
+What is done and what comes next, with links to the issues, is in [docs/ROADMAP.md](docs/ROADMAP.md), the board is [SSHR](https://github.com/users/klovbin/projects/3), reasons for each decision are in [docs/WHY.md](docs/WHY.md) (Russian)
