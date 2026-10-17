@@ -45,16 +45,19 @@ func (e *AmbiguousError) Error() string {
 // Host is one SSH target. Password is stored in the local vault (0600);
 // prefer a key when you can.
 type Host struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Host      string    `json:"host"`
-	Port      int       `json:"port"`
-	User      string    `json:"user"`
-	Key       string    `json:"key,omitempty"`
-	Password  string    `json:"password,omitempty"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	User     string `json:"user"`
+	Key      string `json:"key,omitempty"`
+	Password string `json:"password,omitempty"`
 	// Jump lists hosts to go through, "a,b": saved host names/IDs or
 	// [user@]host[:port], empty means a direct connection
-	Jump      string    `json:"jump,omitempty"`
+	Jump string `json:"jump,omitempty"`
+	// Session is "tmux" or "zellij" to attach to a remote session named
+	// SessionName on connect, empty means a plain shell
+	Session   string    `json:"session,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -122,6 +125,10 @@ func cleanHost(h Host) (Host, error) {
 	}
 	var err error
 	if h.Jump, err = checkJump(h.Jump, h.Name); err != nil {
+		return h, err
+	}
+	h.Session = strings.TrimSpace(h.Session)
+	if err := checkSession(h.Session); err != nil {
 		return h, err
 	}
 	return h, nil

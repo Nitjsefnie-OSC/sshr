@@ -17,6 +17,7 @@ It currently supports:
 - Optional mosh transport, off by default (see [Connecting with mosh](#connecting-with-mosh))
 - Sending a clipboard image to a server, from the CLI and the app (see [Sending images to a server](#sending-images-to-a-server))
 - Jump hosts per host, including chains (see [Jump hosts](#jump-hosts))
+- Attaching to a tmux or zellij session on connect, off by default (see [Keeping the session on the server](#keeping-the-session-on-the-server))
 
 ## Connecting with mosh
 
@@ -53,6 +54,23 @@ In the app it is the **Jump host** field of the host form, `connect` and `paste`
 - If a hop is a saved host, ssh runs sshr itself as `ProxyCommand` (`sshr __proxy …`), because `-J` uses only your ssh config and default keys for the hops and would ignore the key or password saved for the bastion, through `ProxyCommand` every hop logs in with its own saved key or password
 - A saved jump host may have its own jump, so a chain can also be built by saving hosts one behind another, a chain that points back at itself stops after 8 hops with an error
 - mosh is not used through a jump host, it needs a direct UDP path to the server, sshr says so and connects with ssh
+
+## Keeping the session on the server
+
+A host can open a tmux or zellij session on connect instead of a plain shell, then a dropped connection does not kill your work, `sshr connect` again and you are back where you were, it is **off by default**
+
+```sh
+sshr add 10.0.0.7 -u app -k ~/.ssh/app --session tmux
+sshr connect web            # attaches to the session "sshr", creates it the first time
+sshr connect --plain web    # a plain shell this time
+```
+
+In the app it is **On connect open** in the host form: plain shell, tmux or zellij
+
+- sshr runs `tmux new-session -A -s sshr` (or `zellij attach --create sshr`) under `sh` on the server, so a fish or zsh login shell is fine
+- the tool has to be installed on the server, without it sshr says so and opens a plain login shell
+- it works over plain ssh on every OS, keeps port forwarding and terminal images working, and through mosh as well
+- a login script that starts its own tmux on the server still runs in the plain shell, sshr does not change it
 
 ## Sending images to a server
 
@@ -92,7 +110,7 @@ In the order we intend to build them (reasons in [docs/WHY.md](docs/WHY.md)):
 1. Real-server check of the CLI ([#17](https://github.com/klovbin/sshr/issues/17))
 2. Connect / session workflows on top of system SSH ([#16](https://github.com/klovbin/sshr/issues/16)):
    - jump hosts via `ProxyJump` - done ([#19](https://github.com/klovbin/sshr/issues/19)),
-   - attach to tmux/zellij on connect ([#20](https://github.com/klovbin/sshr/issues/20)) — the remote session survives a dropped connection, over plain ssh, on every OS;
+   - attach to tmux/zellij on connect - done ([#20](https://github.com/klovbin/sshr/issues/20)),
    - saved port forwards per host ([#21](https://github.com/klovbin/sshr/issues/21)) — "open DB", "open admin panel" in one click;
    - connection reuse with `ControlMaster`/`ControlPersist` ([#22](https://github.com/klovbin/sshr/issues/22)) — a second session to the same host opens instantly;
    - sending clipboard images to the server — done ([#26](https://github.com/klovbin/sshr/issues/26));

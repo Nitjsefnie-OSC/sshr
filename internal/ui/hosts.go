@@ -9,6 +9,8 @@ import (
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
+
+	sshrapp "sshr.dev/internal/app"
 )
 
 // layoutHostsList renders hosts in the left Servers sidebar.
@@ -118,8 +120,45 @@ func layoutForm(gtx layout.Context, th *material.Theme, s *state) layout.Dimensi
 			hint := material.Caption(th, s.t("field.jump.hint"))
 			hint.Color = colMuted
 			return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, hint.Layout)
+		}),
+		spacer(12),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layoutSessionPicker(gtx, th, s)
 		}))
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
+}
+
+// layoutSessionPicker chooses what connect opens on the server: a plain
+// shell, or a tmux/zellij session that survives a dropped connection
+func layoutSessionPicker(gtx layout.Context, th *material.Theme, s *state) layout.Dimensions {
+	choice := func(btn *widget.Clickable, label, kind string) layout.FlexChild {
+		return layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return authChoiceBtn(gtx, th, btn, label, s.session == kind)
+		})
+	}
+	gap := layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout)
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			l := material.Caption(th, s.t("field.session"))
+			l.Color = colMuted
+			return l.Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{}.Layout(gtx,
+				choice(&s.sessionOffBtn, s.t("session.off"), ""),
+				gap,
+				choice(&s.sessionTmuxBtn, "tmux", sshrapp.SessionTmux),
+				gap,
+				choice(&s.sessionZellijBtn, "zellij", sshrapp.SessionZellij),
+			)
+		}),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			hint := material.Caption(th, s.t("field.session.hint"))
+			hint.Color = colMuted
+			return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, hint.Layout)
+		}),
+	)
 }
 
 func layoutAuthPicker(gtx layout.Context, th *material.Theme, s *state) layout.Dimensions {

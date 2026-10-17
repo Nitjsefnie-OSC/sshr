@@ -73,7 +73,7 @@ func cmdList(store *app.Store) {
 }
 
 func cmdAdd(store *app.Store, args []string) {
-	var host, name, user, key, jump string
+	var host, name, user, key, jump, session string
 	noKey := false
 	port := 22
 	positional := make([]string, 0)
@@ -93,6 +93,11 @@ func cmdAdd(store *app.Store, args []string) {
 		} else if (a == "-J" || a == "--jump") && i+1 < len(args) {
 			i++
 			jump = args[i]
+		} else if strings.HasPrefix(a, "--session=") {
+			session = strings.SplitN(a, "=", 2)[1]
+		} else if a == "--session" && i+1 < len(args) {
+			i++
+			session = args[i]
 		} else if a == "--no-key" {
 			noKey = true
 		} else if (a == "-n" || a == "--name") && i+1 < len(args) {
@@ -116,7 +121,7 @@ func cmdAdd(store *app.Store, args []string) {
 		host = positional[0]
 	}
 	if host == "" {
-		fmt.Fprintln(os.Stderr, "Usage: sshr add <host> -u <user> [-n <name>] [-p <port>] [-k <key> | --no-key] [-J <jump>]")
+		fmt.Fprintln(os.Stderr, "Usage: sshr add <host> -u <user> [-n <name>] [-p <port>] [-k <key> | --no-key] [-J <jump>] [--session tmux|zellij]")
 		os.Exit(1)
 	}
 	if user == "" {
@@ -142,7 +147,7 @@ func cmdAdd(store *app.Store, args []string) {
 	}
 	h, err := store.Add(app.Host{
 		Name: name, Host: host, User: user, Port: port,
-		Key: key, Password: password, Jump: jump,
+		Key: key, Password: password, Jump: jump, Session: session,
 	})
 	if err != nil {
 		fatal(err)
@@ -155,6 +160,9 @@ func cmdAdd(store *app.Store, args []string) {
 	}
 	if h.Jump != "" {
 		msg += " via " + h.Jump
+	}
+	if h.Session != "" {
+		msg += " session=" + h.Session
 	}
 	fmt.Println(msg)
 }
@@ -188,6 +196,7 @@ func cmdRm(store *app.Store, args []string) {
 func cmdConnect(store *app.Store, args []string) {
 	settings, _ := app.LoadSettings()
 	useMosh := settings.Mosh
+	plain := false
 	rest := make([]string, 0, len(args))
 	for _, a := range args {
 		switch a {
@@ -195,12 +204,14 @@ func cmdConnect(store *app.Store, args []string) {
 			useMosh = true
 		case "--ssh":
 			useMosh = false
+		case "--plain":
+			plain = true
 		default:
 			rest = append(rest, a)
 		}
 	}
 	if len(rest) < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: sshr connect [--mosh|--ssh] <name or id>")
+		fmt.Fprintln(os.Stderr, "Usage: sshr connect [--mosh|--ssh] [--plain] <name or id>")
 		os.Exit(1)
 	}
 	query := strings.Join(rest, " ")
@@ -213,6 +224,10 @@ func cmdConnect(store *app.Store, args []string) {
 		fatal(err)
 	}
 	dest := h.Dest()
+	session := h.Session
+	if plain {
+		session = ""
+	}
 
 	// mosh needs a direct UDP path to the server, which a bastion does not
 	// give, and its --ssh cannot carry a quoted ProxyCommand
@@ -221,7 +236,7 @@ func cmdConnect(store *app.Store, args []string) {
 		useMosh = false
 	}
 	if useMosh {
-		if code, ok := runMosh(h, sshOpts, dest); ok {
+		if code, ok := runMosh(h, sshOpts, dest, session); ok {
 			os.Exit(code)
 		}
 	}
@@ -234,8 +249,18 @@ func cmdConnect(store *app.Store, args []string) {
 	if h.Jump != "" {
 		via = " via " + h.Jump
 	}
+	if session != "" {
+		via += ", " + session + " session " + app.SessionName
+	}
 	fmt.Printf("Connecting to %s (%s:%d)%s...\n", h.Name, dest, h.Port, via)
-	os.Exit(run(h, sshBin, append(sshOpts, "--", dest)...))
+	if session != "" {
+		// A remote command gets no terminal unless asked, and tmux or
+		// zellij need one
+		sshOpts = append(sshOpts, "-t", "--", dest, app.SessionCommand(session))
+	} else {
+		sshOpts = append(sshOpts, "--", dest)
+	}
+	os.Exit(run(h, sshBin, sshOpts...))
 }
 
 // cmdProxy is run by ssh as ProxyCommand ("sshr __proxy <chain> %h %p"), it
@@ -282,7 +307,7 @@ const moshStartup = 20 * time.Second
 
 // runMosh connects with mosh. ok=false means mosh is unusable here or did not
 // start, and the caller should fall back to plain ssh.
-func runMosh(h *app.Host, sshOpts []string, dest string) (code int, ok bool) {
+func runMosh(h *app.Host, sshOpts []string, dest, session string) (code int, ok bool) {
 	moshBin, err := exec.LookPath("mosh")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "sshr: mosh is not installed, using ssh")
@@ -295,7 +320,12 @@ func runMosh(h *app.Host, sshOpts []string, dest string) (code int, ok bool) {
 	}
 	fmt.Printf("Connecting to %s (%s:%d) with mosh...\n", h.Name, dest, h.Port)
 	started := time.Now()
-	code = run(h, moshBin, "--ssh=ssh "+strings.Join(sshOpts, " "), "--", dest)
+	moshArgs := []string{"--ssh=ssh " + strings.Join(sshOpts, " "), "--", dest}
+	if script := app.SessionScript(session); script != "" {
+		// mosh-server runs the command itself, without a shell in between
+		moshArgs = append(moshArgs, "sh", "-c", script)
+	}
+	code = run(h, moshBin, moshArgs...)
 	if code != 0 && time.Since(started) < moshStartup {
 		fmt.Fprintln(os.Stderr, "sshr: mosh did not start, falling back to ssh")
 		return 0, false
@@ -328,14 +358,18 @@ Usage:
   sshr                              open GUI
   sshr list                         list saved hosts
   sshr add <host> -u <user> [-n <name>] [-p <port>] [-k <key> | --no-key] [-J <jump>]
+           [--session tmux|zellij]
                                     add a host (asks for the auth method
                                     unless -k or --no-key is given),
                                     -J a,b goes through jump hosts: saved
-                                    host names or [user@]host[:port]
+                                    host names or [user@]host[:port],
+                                    --session attaches to tmux/zellij
+                                    on connect (off by default)
   sshr rm <name or id>              remove a host
-  sshr connect [--mosh|--ssh] <name or id>
+  sshr connect [--mosh|--ssh] [--plain] <name or id>
                                     ssh into a host (mosh if enabled
-                                    in settings or with --mosh)
+                                    in settings or with --mosh),
+                                    --plain skips the host's session
   sshr paste [-c] [-f <file>] <name or id>
                                     upload the clipboard image (or a file)
                                     to the host and print its path there;

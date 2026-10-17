@@ -59,6 +59,11 @@ type state struct {
 	authKind    authKind
 	authPassBtn widget.Clickable
 	authKeyBtn  widget.Clickable
+	// session picker in the host form: "", tmux or zellij
+	session          string
+	sessionOffBtn    widget.Clickable
+	sessionTmuxBtn   widget.Clickable
+	sessionZellijBtn widget.Clickable
 
 	addBtn      widget.Clickable
 	settingsBtn widget.Clickable
@@ -180,6 +185,15 @@ func (s *state) handle(gtx layout.Context) {
 	if s.authKeyBtn.Clicked(gtx) {
 		s.authKind = authKey
 	}
+	if s.sessionOffBtn.Clicked(gtx) {
+		s.session = ""
+	}
+	if s.sessionTmuxBtn.Clicked(gtx) {
+		s.session = sshrapp.SessionTmux
+	}
+	if s.sessionZellijBtn.Clicked(gtx) {
+		s.session = sshrapp.SessionZellij
+	}
 	if s.moshBox.Update(gtx) {
 		s.settings.Mosh = s.moshBox.Value
 		_ = sshrapp.SaveSettings(s.settings)
@@ -265,6 +279,7 @@ func (s *state) clearForm() {
 	s.passEd.SetText("")
 	s.passEd.Mask = '•'
 	s.jumpEd.SetText("")
+	s.session = ""
 	s.authKind = authPassword
 	s.form.editID = ""
 }
@@ -326,6 +341,7 @@ func (s *state) saveHost() {
 		Key:      key,
 		Password: password,
 		Jump:     s.jumpEd.Text(),
+		Session:  s.session,
 	}
 	if s.form.editID != "" {
 		h, err = s.store.Update(s.form.editID, in)

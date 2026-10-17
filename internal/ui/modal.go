@@ -77,6 +77,7 @@ func (s *state) openEditForm(h sshrapp.Host) {
 	}
 	s.passEd.Mask = '•'
 	s.jumpEd.SetText(h.Jump)
+	s.session = h.Session
 	s.form.editID = h.ID
 	s.form.err = ""
 	s.form.open = true
