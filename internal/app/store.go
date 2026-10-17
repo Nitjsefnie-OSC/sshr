@@ -76,55 +76,53 @@ func DefaultStore() (*Store, error) {
 	return &Store{Dir: dir}, nil
 }
 
-func (s *Store) Add(name, host, user, key, password, jump string, port int) (*Host, error) {
-	name = strings.TrimSpace(name)
-	host = strings.TrimSpace(host)
-	user = strings.TrimSpace(user)
-	if host == "" {
-		return nil, ErrHostEmpty
+// Add saves a new host, ID and CreatedAt are set here
+func (s *Store) Add(in Host) (*Host, error) {
+	h, err := cleanHost(in)
+	if err != nil {
+		return nil, err
 	}
-	if strings.HasPrefix(host, "-") {
-		return nil, fmt.Errorf("host must not start with '-': %s", host)
+	if h.ID, err = newID(); err != nil {
+		return nil, err
 	}
-	if user == "" {
-		return nil, ErrUserRequired
+	h.CreatedAt = time.Now().UTC()
+	if err := s.save(&h); err != nil {
+		return nil, err
 	}
-	if name == "" {
-		name = host
-	}
-	if port == 0 {
-		port = 22
-	}
-	if port < 1 || port > 65535 {
-		return nil, ErrPortInvalid
-	}
+	return &h, nil
+}
 
-	id, err := newID()
-	if err != nil {
-		return nil, err
+// cleanHost trims and checks the fields of a host before it is saved
+func cleanHost(h Host) (Host, error) {
+	h.Name = strings.TrimSpace(h.Name)
+	h.Host = strings.TrimSpace(h.Host)
+	h.User = strings.TrimSpace(h.User)
+	if h.Host == "" {
+		return h, ErrHostEmpty
 	}
-	key = strings.TrimSpace(key)
-	password = strings.TrimSpace(password)
-	if key != "" {
-		password = ""
+	if strings.HasPrefix(h.Host, "-") {
+		return h, fmt.Errorf("host must not start with '-': %s", h.Host)
 	}
-	jump, err = checkJump(jump, name)
-	if err != nil {
-		return nil, err
+	if h.User == "" {
+		return h, ErrUserRequired
 	}
-	h := &Host{
-		ID:        id,
-		Name:      name,
-		Host:      host,
-		Port:      port,
-		User:      user,
-		Key:       key,
-		Password:  password,
-		Jump:      jump,
-		CreatedAt: time.Now().UTC(),
+	if h.Name == "" {
+		h.Name = h.Host
 	}
-	if err := s.save(h); err != nil {
-		return nil, err
+	if h.Port == 0 {
+		h.Port = 22
+	}
+	if h.Port < 1 || h.Port > 65535 {
+		return h, ErrPortInvalid
+	}
+	h.Key = strings.TrimSpace(h.Key)
+	h.Password = strings.TrimSpace(h.Password)
+	if h.Key != "" {
+		h.Password = ""
+	}
+	var err error
+	if h.Jump, err = checkJump(h.Jump, h.Name); err != nil {
+		return h, err
 	}
 	return h, nil
 }
@@ -212,8 +210,9 @@ func (s *Store) Delete(id string) error {
 	return nil
 }
 
-// Update rewrites an existing host; CreatedAt is kept.
-func (s *Store) Update(id, name, host, user, key, password, jump string, port int) (*Host, error) {
+// Update rewrites an existing host with the fields of in, ID and
+// CreatedAt are kept
+func (s *Store) Update(id string, in Host) (*Host, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil, ErrNotFound
@@ -222,51 +221,15 @@ func (s *Store) Update(id, name, host, user, key, password, jump string, port in
 	if err != nil {
 		return nil, err
 	}
-	name = strings.TrimSpace(name)
-	host = strings.TrimSpace(host)
-	user = strings.TrimSpace(user)
-	if host == "" {
-		return nil, ErrHostEmpty
-	}
-	if strings.HasPrefix(host, "-") {
-		return nil, fmt.Errorf("host must not start with '-': %s", host)
-	}
-	if user == "" {
-		return nil, ErrUserRequired
-	}
-	if name == "" {
-		name = host
-	}
-	if port == 0 {
-		port = 22
-	}
-	if port < 1 || port > 65535 {
-		return nil, ErrPortInvalid
-	}
-	key = strings.TrimSpace(key)
-	password = strings.TrimSpace(password)
-	if key != "" {
-		password = ""
-	}
-	jump, err = checkJump(jump, name)
+	h, err := cleanHost(in)
 	if err != nil {
 		return nil, err
 	}
-	h := &Host{
-		ID:        cur.ID,
-		Name:      name,
-		Host:      host,
-		Port:      port,
-		User:      user,
-		Key:       key,
-		Password:  password,
-		Jump:      jump,
-		CreatedAt: cur.CreatedAt,
-	}
-	if err := s.save(h); err != nil {
+	h.ID, h.CreatedAt = cur.ID, cur.CreatedAt
+	if err := s.save(&h); err != nil {
 		return nil, err
 	}
-	return h, nil
+	return &h, nil
 }
 
 // checkJump normalizes a jump spec and refuses one that names the host

@@ -318,10 +318,19 @@ func (s *state) saveHost() {
 		h   *sshrapp.Host
 		err error
 	)
+	in := sshrapp.Host{
+		Name:     s.nameEd.Text(),
+		Host:     s.hostEd.Text(),
+		User:     s.userEd.Text(),
+		Port:     port,
+		Key:      key,
+		Password: password,
+		Jump:     s.jumpEd.Text(),
+	}
 	if s.form.editID != "" {
-		h, err = s.store.Update(s.form.editID, s.nameEd.Text(), s.hostEd.Text(), s.userEd.Text(), key, password, s.jumpEd.Text(), port)
+		h, err = s.store.Update(s.form.editID, in)
 	} else {
-		h, err = s.store.Add(s.nameEd.Text(), s.hostEd.Text(), s.userEd.Text(), key, password, s.jumpEd.Text(), port)
+		h, err = s.store.Add(in)
 	}
 	if err != nil {
 		s.form.err = s.mapErr(err)

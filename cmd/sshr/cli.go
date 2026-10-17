@@ -140,7 +140,10 @@ func cmdAdd(store *app.Store, args []string) {
 	} else {
 		password = promptPassword()
 	}
-	h, err := store.Add(name, host, user, key, password, jump, port)
+	h, err := store.Add(app.Host{
+		Name: name, Host: host, User: user, Port: port,
+		Key: key, Password: password, Jump: jump,
+	})
 	if err != nil {
 		fatal(err)
 	}
