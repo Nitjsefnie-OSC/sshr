@@ -21,3 +21,5 @@ coverage.*
 .env
 *.pem
 /sshr-sync
+/cli/
+/gui/
