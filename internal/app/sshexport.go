@@ -194,6 +194,8 @@ func (s *Store) includeLine() string {
 			p = "~/" + filepath.ToSlash(rel)
 		}
 	}
+	// Windows OpenSSH reads C:/Users/... but not C:\Users\... in Include
+	p = filepath.ToSlash(p)
 	if strings.ContainsAny(p, " \t") {
 		p = `"` + p + `"`
 	}
