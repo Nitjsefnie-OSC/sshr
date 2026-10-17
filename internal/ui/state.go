@@ -40,6 +40,8 @@ const (
 	authVault
 	// authOP is the key of an SSH Key item in 1Password
 	authOP
+	// authBW is the key of an SSH Key item in Bitwarden
+	authBW
 	// authAgent is a key that stays in an ssh agent
 	authAgent
 )
@@ -70,6 +72,8 @@ type state struct {
 	authKeyBtn   widget.Clickable
 	authVaultBtn widget.Clickable
 	authOPBtn    widget.Clickable
+	authBWBtn    widget.Clickable
+	passBWBtn    widget.Clickable
 	authAgentBtn widget.Clickable
 	agentEd      widget.Editor // system, 1password or a socket path
 	agentKeyEd   widget.Editor // fingerprint or comment of one agent key
@@ -239,6 +243,12 @@ func (s *state) handle(gtx layout.Context) {
 	}
 	if s.authOPBtn.Clicked(gtx) {
 		s.authKind = authOP
+	}
+	if s.authBWBtn.Clicked(gtx) {
+		s.authKind = authBW
+	}
+	if s.passBWBtn.Clicked(gtx) {
+		s.passMode = sshrapp.PasswordBitwarden
 	}
 	if s.authAgentBtn.Clicked(gtx) {
 		s.authKind = authAgent
@@ -450,6 +460,16 @@ func (s *state) saveHost() {
 			s.form.err = s.t("err.opRef_required")
 			return
 		}
+	} else if s.authKind == authBW {
+		keyMode = sshrapp.KeyBitwarden
+		keyRef = strings.TrimSpace(s.keyRefEd.Text())
+		if keyRef == "" {
+			s.form.err = s.t("err.bwRef_required")
+			return
+		}
+		if cur := s.editedHost(); cur != nil && cur.KeyMode == sshrapp.KeyBitwarden && cur.KeyRef == keyRef {
+			keyPub = cur.KeyPub
+		}
 	} else if s.authKind == authVault {
 		keyMode = sshrapp.KeyVault
 		if t := strings.TrimSpace(s.keyPasteEd.Text()); t != "" {
@@ -472,6 +492,13 @@ func (s *state) saveHost() {
 		}
 	} else if s.passMode == sshrapp.PasswordAsk {
 		passMode = sshrapp.PasswordAsk
+	} else if s.passMode == sshrapp.PasswordBitwarden {
+		passMode = sshrapp.PasswordBitwarden
+		passRef = strings.TrimSpace(s.passRefEd.Text())
+		if passRef == "" {
+			s.form.err = s.t("err.bwRef_required")
+			return
+		}
 	} else if s.passMode == sshrapp.PasswordOnePassword {
 		passMode = sshrapp.PasswordOnePassword
 		passRef = strings.TrimSpace(s.passRefEd.Text())

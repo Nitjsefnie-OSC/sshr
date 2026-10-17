@@ -163,6 +163,8 @@ type newHost struct {
 	AskPassword bool     `json:"ask_password"`
 	OPPassword  string   `json:"op_password"`
 	OPKey       string   `json:"op_key"`
+	BWPassword  string   `json:"bw_password"`
+	BWKey       string   `json:"bw_key"`
 	Jump        string   `json:"jump"`
 	Session     string   `json:"session"`
 	Forwards    []string `json:"forwards"`
@@ -197,6 +199,10 @@ func (a *api) addHost(w http.ResponseWriter, r *http.Request) {
 		h.KeyMode, h.KeyRef = app.KeyOnePassword, in.OPKey
 	case in.OPPassword != "":
 		h.PasswordMode, h.PasswordRef = app.PasswordOnePassword, in.OPPassword
+	case in.BWKey != "":
+		h.KeyMode, h.KeyRef = app.KeyBitwarden, in.BWKey
+	case in.BWPassword != "":
+		h.PasswordMode, h.PasswordRef = app.PasswordBitwarden, in.BWPassword
 	case in.AskPassword:
 		h.PasswordMode = app.PasswordAsk
 	}

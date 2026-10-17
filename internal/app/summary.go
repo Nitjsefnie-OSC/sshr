@@ -24,12 +24,16 @@ func (h *Host) AuthLabel() string {
 		return "key stored in sshr"
 	case h.KeyMode == KeyOnePassword:
 		return "key in 1Password"
+	case h.KeyMode == KeyBitwarden:
+		return "key in Bitwarden"
 	case h.KeyMode == KeyAgent:
 		return "key from an ssh agent"
 	case h.PasswordMode == PasswordSaved:
 		return "saved password"
 	case h.PasswordMode == PasswordOnePassword:
 		return "password in 1Password"
+	case h.PasswordMode == PasswordBitwarden:
+		return "password in Bitwarden"
 	case h.PasswordMode == PasswordAsk:
 		return "password asked every time (not usable without a terminal)"
 	}

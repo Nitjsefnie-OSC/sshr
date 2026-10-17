@@ -35,10 +35,14 @@ func layoutHostsList(gtx layout.Context, th *material.Theme, s *state) layout.Di
 			authLabel = s.t("auth.vault.short")
 		case h.KeyMode == sshrapp.KeyOnePassword:
 			authLabel = s.t("auth.opKey.short")
+		case h.KeyMode == sshrapp.KeyBitwarden:
+			authLabel = s.t("auth.bwKey.short")
 		case h.KeyMode == sshrapp.KeyAgent:
 			authLabel = s.t("auth.agent.short")
 		case h.PasswordMode == sshrapp.PasswordOnePassword:
 			authLabel = s.t("auth.opPass.short")
+		case h.PasswordMode == sshrapp.PasswordBitwarden:
+			authLabel = s.t("auth.bwPass.short")
 		case h.PasswordMode == sshrapp.PasswordSaved:
 			authLabel = s.t("auth.password.short")
 		case h.PasswordMode == sshrapp.PasswordAsk:
@@ -164,10 +168,14 @@ func layoutForm(gtx layout.Context, th *material.Theme, s *state) layout.Dimensi
 				l.Color = colMuted
 				return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, l.Layout)
 			}))
-	} else if s.authKind == authOP {
-		children = append(children, spacer(10), field(th, s.t("field.keyRef"), &s.keyRefEd),
+	} else if s.authKind == authOP || s.authKind == authBW {
+		label, hintKey := s.t("field.keyRef"), "field.keyRef.hint"
+		if s.authKind == authBW {
+			label, hintKey = s.t("field.bwKeyRef"), "field.bwRef.hint"
+		}
+		children = append(children, spacer(10), field(th, label, &s.keyRefEd),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				l := material.Caption(th, s.t("field.keyRef.hint"))
+				l := material.Caption(th, s.t(hintKey))
 				l.Color = colMuted
 				return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, l.Layout)
 			}))
@@ -192,7 +200,15 @@ func layoutForm(gtx layout.Context, th *material.Theme, s *state) layout.Dimensi
 		if s.passMode == sshrapp.PasswordOnePassword {
 			children = append(children, spacer(10), field(th, s.t("field.passRef"), &s.passRefEd))
 		}
-		if s.passMode != sshrapp.PasswordAsk {
+		if s.passMode == sshrapp.PasswordBitwarden {
+			children = append(children, spacer(10), field(th, s.t("field.bwPassRef"), &s.passRefEd),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					hint := material.Caption(th, s.t("field.bwRef.hint"))
+					hint.Color = colMuted
+					return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, hint.Layout)
+				}))
+		}
+		if s.passMode != sshrapp.PasswordAsk && s.passMode != sshrapp.PasswordBitwarden {
 			hintKey := "field.password.hint"
 			if s.passMode == sshrapp.PasswordOnePassword {
 				hintKey = "field.passRef.hint"
@@ -272,11 +288,15 @@ func layoutSessionPicker(gtx layout.Context, th *material.Theme, s *state) layou
 func layoutPassModePicker(gtx layout.Context, th *material.Theme, s *state) layout.Dimensions {
 	return layout.Flex{}.Layout(gtx,
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			return authChoiceBtn(gtx, th, &s.passSavedBtn, s.t("auth.pass.saved"), s.passMode != sshrapp.PasswordAsk && s.passMode != sshrapp.PasswordOnePassword)
+			return authChoiceBtn(gtx, th, &s.passSavedBtn, s.t("auth.pass.saved"), s.passMode != sshrapp.PasswordAsk && s.passMode != sshrapp.PasswordOnePassword && s.passMode != sshrapp.PasswordBitwarden)
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 			return authChoiceBtn(gtx, th, &s.passOPBtn, "1Password", s.passMode == sshrapp.PasswordOnePassword)
+		}),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return authChoiceBtn(gtx, th, &s.passBWBtn, "Bitwarden", s.passMode == sshrapp.PasswordBitwarden)
 		}),
 		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
@@ -312,7 +332,7 @@ func layoutAuthPicker(gtx layout.Context, th *material.Theme, s *state) layout.D
 			return layout.Flex{}.Layout(gtx,
 				choice(&s.authOPBtn, s.t("auth.opKey"), authOP), gap,
 				choice(&s.authAgentBtn, s.t("auth.agent"), authAgent), gap,
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{} }),
+				choice(&s.authBWBtn, s.t("auth.bwKey"), authBW),
 			)
 		}),
 	)

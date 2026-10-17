@@ -97,7 +97,7 @@ const authSockOrigEnv = "SSHR_AUTH_SOCK_ORIG"
 // agentKey tells whether the key of h is served by an agent of sshr, a
 // key sealed in sshr or one read from 1Password
 func (h *Host) agentKey() bool {
-	return h.KeyMode == KeyVault || h.KeyMode == KeyOnePassword
+	return h.KeyMode == KeyVault || h.KeyMode == KeyOnePassword || h.KeyMode == KeyBitwarden
 }
 
 // loadKey returns the private key of a host that keeps it in sshr or in
@@ -123,6 +123,11 @@ func loadKey(h *Host) (any, error) {
 	case KeyOnePassword:
 		var err error
 		if plain, err = opReadKey(h.KeyRef); err != nil {
+			return nil, err
+		}
+	case KeyBitwarden:
+		var err error
+		if plain, _, err = bwKey(h.KeyRef); err != nil {
 			return nil, err
 		}
 	default:

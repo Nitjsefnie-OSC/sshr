@@ -22,6 +22,7 @@ What happens to passwords, keys and synced data, the README says how to use each
 - sshr serves the key from an ssh agent inside its own process for as long as ssh runs, on a unix socket in the 0700 control directory (a named pipe on Windows), the private key is only in memory
 - ssh gets `-i <id>.pub -o IdentitiesOnly=yes -o IdentityAgent=SSH_AUTH_SOCK -o ForwardAgent=no`, it offers only this key and the server cannot reach the agent
 - 1Password items are read with `op read` on every connect, a new item gets the password as a JSON template on stdin, not in arguments
+- Bitwarden items are read with `bw get password` and `bw get item` (the key is in the item's `sshKey` field) on every connect, with the session from `BW_SESSION`, sshr never sees the master password
 
 ## Sync
 
@@ -30,7 +31,7 @@ What happens to passwords, keys and synced data, the README says how to use each
 - the manifest lists hosts, blob hashes and trusted devices, it is MAC'd with the vault key, signed by the pushing device and chained to the previous manifest, a device accepts only a chain that continues what it saw, signed by a device it trusts
 - a new device is trusted only after comparing its fingerprint on both screens, the invite code carries the inviting device's fingerprint, so the server can neither add its own device nor impersonate the inviter
 - saved passwords travel inside the encryption and are sealed again on the receiving machine, private keys kept in sshr never leave their device
-- 1Password references never sync, a host from another device keeps the reference set on this machine or falls back to asking, otherwise one stolen device could point every other device at a different 1Password item and collect it
+- 1Password and Bitwarden references never sync, a host from another device keeps the reference set on this machine or falls back to asking, otherwise one stolen device could point every other device at a different 1Password item and collect it
 - removing a device rotates the vault key, re-encrypts every host and revokes its token
 - limits: a new device trusts whatever the server shows first, a server can show two devices different histories (compare the state fingerprint in `sshr sync status`), the server sees host count, push times, addresses and device names, and can hold back changes, a removed device keeps what it downloaded
 

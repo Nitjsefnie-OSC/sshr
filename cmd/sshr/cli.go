@@ -154,10 +154,14 @@ func cmdList(store *app.Store, args []string) {
 			keyCol = "key (sshr)"
 		case h.KeyMode == app.KeyOnePassword:
 			keyCol = "key (1password)"
+		case h.KeyMode == app.KeyBitwarden:
+			keyCol = "key (bitwarden)"
 		case h.KeyMode == app.KeyAgent:
 			keyCol = "agent (" + agentLabel(h.Agent) + ")"
 		case h.PasswordMode == app.PasswordOnePassword:
 			keyCol = "password (1password)"
+		case h.PasswordMode == app.PasswordBitwarden:
+			keyCol = "password (bitwarden)"
 		case h.PasswordMode == app.PasswordSaved:
 			keyCol = "password"
 		case h.PasswordMode == app.PasswordAsk:
@@ -185,6 +189,8 @@ func cmdAdd(store *app.Store, args []string) {
 	// 1Password: --op-password / --op-key link existing items,
 	// --store 1password creates an item from the password typed now
 	var opPassword, opKey, store1, opVault string
+	// Bitwarden: --bw-password / --bw-key link existing items by ID
+	var bwPassword, bwKey string
 	// --agent system|1password|<socket> keeps the key in an ssh agent,
 	// --agent-key picks one of its keys
 	var agentName, agentKey string
@@ -232,6 +238,12 @@ func cmdAdd(store *app.Store, args []string) {
 		} else if a == "--agent-key" && i+1 < len(args) {
 			i++
 			agentKey = args[i]
+		} else if a == "--bw-password" && i+1 < len(args) {
+			i++
+			bwPassword = args[i]
+		} else if a == "--bw-key" && i+1 < len(args) {
+			i++
+			bwKey = args[i]
 		} else if (a == "--op-password" || a == "--op-key" || a == "--store" || a == "--op-vault") && i+1 < len(args) {
 			i++
 			switch a {
@@ -288,8 +300,8 @@ func cmdAdd(store *app.Store, args []string) {
 		fmt.Fprintf(os.Stderr, "sshr add: --store takes sshr or 1password, got %q\n", store1)
 		os.Exit(1)
 	}
-	if n := countTrue(key != "", noKey, askPassword, keyStdin, opPassword != "", opKey != "", useAgent); n > 1 {
-		fmt.Fprintln(os.Stderr, "sshr add: choose one of -k, --key-stdin, --no-key, --ask-password, --op-password, --op-key, --agent")
+	if n := countTrue(key != "", noKey, askPassword, keyStdin, opPassword != "", opKey != "", bwPassword != "", bwKey != "", useAgent); n > 1 {
+		fmt.Fprintln(os.Stderr, "sshr add: choose one of -k, --key-stdin, --no-key, --ask-password, --op-password, --op-key, --bw-password, --bw-key, --agent")
 		os.Exit(1)
 	}
 	if agentKey != "" && !useAgent {
@@ -313,6 +325,10 @@ func cmdAdd(store *app.Store, args []string) {
 		passwordMode, passwordRef = app.PasswordOnePassword, opPassword
 	} else if opKey != "" {
 		keyMode, keyRef = app.KeyOnePassword, opKey
+	} else if bwPassword != "" {
+		passwordMode, passwordRef = app.PasswordBitwarden, bwPassword
+	} else if bwKey != "" {
+		keyMode, keyRef = app.KeyBitwarden, bwKey
 	} else if keyStdin {
 		mustKeychain()
 		b, err := io.ReadAll(io.LimitReader(os.Stdin, 64<<10))
@@ -362,6 +378,8 @@ func cmdAdd(store *app.Store, args []string) {
 		msg += " key stored in sshr (" + h.KeyFingerprint() + ")"
 	} else if h.KeyMode == app.KeyOnePassword {
 		msg += " key in 1Password (" + h.KeyFingerprint() + ")"
+	} else if h.KeyMode == app.KeyBitwarden {
+		msg += " key in Bitwarden (" + h.KeyFingerprint() + ")"
 	} else if h.KeyMode == app.KeyAgent {
 		msg += " key from the " + agentLabel(h.Agent) + " agent"
 		if fp := h.KeyFingerprint(); fp != "" {
@@ -369,6 +387,8 @@ func cmdAdd(store *app.Store, args []string) {
 		}
 	} else if h.PasswordMode == app.PasswordOnePassword {
 		msg += " auth=password in 1Password (" + h.PasswordRef + ")"
+	} else if h.PasswordMode == app.PasswordBitwarden {
+		msg += " auth=password in Bitwarden (" + h.PasswordRef + ")"
 	} else if h.PasswordMode == app.PasswordSaved {
 		msg += " auth=password (encrypted)"
 	} else if h.PasswordMode == app.PasswordAsk {
@@ -641,6 +661,9 @@ Usage:
                                     connect, --no-key --store 1password
                                     creates a 1Password item from the
                                     password (--op-vault <name>),
+                                    --bw-password <item id> and
+                                    --bw-key <item id> read them from
+                                    Bitwarden (bw, with BW_SESSION set),
                                     --agent [system|1password|<socket>]
                                     uses a key from an ssh agent,
                                     --agent-key <fingerprint|comment>

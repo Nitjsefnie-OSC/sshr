@@ -116,6 +116,16 @@ sshr add web -u deploy --op-key "op://Private/web key/private key"
 
 Needs the `op` CLI signed in, each connect reads the item. 1Password references do not sync between devices
 
+## Passwords and keys in Bitwarden
+
+```sh
+export BW_SESSION="$(bw unlock --raw)"
+sshr add web -u deploy --bw-password <item id>   # bw list items --search web
+sshr add web -u deploy --bw-key <item id>        # an SSH Key item
+```
+
+Needs the `bw` CLI unlocked, each connect reads the item. App: **Bitwarden** for the password or **Key in Bitwarden**. Without a session a password is asked by ssh, a key host stops with the error. References do not sync
+
 ## Jump hosts
 
 ```sh

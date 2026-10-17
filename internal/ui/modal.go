@@ -86,6 +86,9 @@ func (s *state) openEditForm(h sshrapp.Host) {
 	} else if h.KeyMode == sshrapp.KeyOnePassword {
 		s.authKind = authOP
 		s.keyEd.SetText("")
+	} else if h.KeyMode == sshrapp.KeyBitwarden {
+		s.authKind = authBW
+		s.keyEd.SetText("")
 	} else if h.KeyMode == sshrapp.KeyVault {
 		s.authKind = authVault
 		s.keyEd.SetText("")
@@ -99,7 +102,7 @@ func (s *state) openEditForm(h sshrapp.Host) {
 	} else {
 		s.authKind = authPassword
 		s.keyEd.SetText("")
-		if h.PasswordMode == sshrapp.PasswordAsk || h.PasswordMode == sshrapp.PasswordOnePassword {
+		if h.PasswordMode == sshrapp.PasswordAsk || h.PasswordMode == sshrapp.PasswordOnePassword || h.PasswordMode == sshrapp.PasswordBitwarden {
 			s.passMode = h.PasswordMode
 		}
 		s.form.hasSavedPassword = h.PasswordMode == sshrapp.PasswordSaved

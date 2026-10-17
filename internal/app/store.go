@@ -188,14 +188,14 @@ func cleanHost(h Host) (Host, error) {
 		h.PasswordMode = PasswordSaved
 	}
 	switch h.PasswordMode {
-	case "", PasswordAsk, PasswordSaved, PasswordOnePassword:
+	case "", PasswordAsk, PasswordSaved, PasswordOnePassword, PasswordBitwarden:
 	default:
 		return h, fmt.Errorf("unknown password mode %q", h.PasswordMode)
 	}
 	if len(h.KeyData) > 0 {
 		h.KeyMode = KeyVault
 	}
-	if h.KeyMode != KeyOnePassword {
+	if h.KeyMode != KeyOnePassword && h.KeyMode != KeyBitwarden {
 		h.KeyRef = ""
 	}
 	if h.KeyMode != KeyAgent {
@@ -229,6 +229,19 @@ func cleanHost(h Host) (Host, error) {
 			}
 			h.KeyPub = pub
 		}
+	case KeyBitwarden:
+		h.Key, h.KeyData, h.KeyPassphrase, h.KeySealed = "", nil, "", ""
+		h.KeyRef = strings.TrimSpace(h.KeyRef)
+		if err := checkBWRef(h.KeyRef); err != nil {
+			return h, err
+		}
+		if h.KeyPub == "" {
+			pub, err := bwKeyPub(h.KeyRef)
+			if err != nil {
+				return h, err
+			}
+			h.KeyPub = pub
+		}
 	default:
 		return h, fmt.Errorf("unknown key mode %q", h.KeyMode)
 	}
@@ -241,14 +254,22 @@ func cleanHost(h Host) (Host, error) {
 	if h.PasswordMode != PasswordSaved && h.PasswordMode != PasswordOnePassword {
 		h.Password = ""
 	}
-	if h.PasswordMode == PasswordOnePassword {
+	switch h.PasswordMode {
+	case PasswordOnePassword:
 		h.PasswordRef = strings.TrimSpace(h.PasswordRef)
 		if h.PasswordRef != "" {
 			if err := checkOPRef(h.PasswordRef); err != nil {
 				return h, err
 			}
 		}
-	} else {
+	case PasswordBitwarden:
+		// bw has no "create" here, the item is made in Bitwarden first
+		h.Password = ""
+		h.PasswordRef = strings.TrimSpace(h.PasswordRef)
+		if err := checkBWRef(h.PasswordRef); err != nil {
+			return h, err
+		}
+	default:
 		h.PasswordRef = ""
 	}
 	var err error
@@ -440,27 +461,39 @@ func (s *Store) Import(in Host) (*Host, error) {
 // their fields to this list
 func FromOtherDevice(in Host, local *Host) (Host, []string) {
 	var notes []string
-	if in.PasswordMode == PasswordOnePassword {
-		if local != nil && local.PasswordMode == PasswordOnePassword && local.PasswordRef != "" {
+	if name := managerName(in.PasswordMode); name != "" {
+		if local != nil && local.PasswordMode == in.PasswordMode && local.PasswordRef != "" {
 			in.PasswordRef = local.PasswordRef
 		} else {
 			in.PasswordMode, in.PasswordRef = PasswordAsk, ""
-			notes = append(notes, "the password is in 1Password on the other device, set its reference here, until then it is asked")
+			notes = append(notes, "the password is in "+name+" on the other device, set its reference here, until then it is asked")
 		}
 	} else {
 		in.PasswordRef = ""
 	}
-	if in.KeyMode == KeyOnePassword {
-		if local != nil && local.KeyMode == KeyOnePassword && local.KeyRef != "" {
+	if name := managerName(in.KeyMode); name != "" {
+		if local != nil && local.KeyMode == in.KeyMode && local.KeyRef != "" {
 			in.KeyRef, in.KeyPub = local.KeyRef, local.KeyPub
 		} else {
 			in.KeyMode, in.KeyRef, in.KeyPub = "", "", ""
-			notes = append(notes, "the key is in 1Password on the other device, set its reference here, until then ssh uses its default keys")
+			notes = append(notes, "the key is in "+name+" on the other device, set its reference here, until then ssh uses its default keys")
 		}
 	} else {
 		in.KeyRef = ""
 	}
 	return in, notes
+}
+
+// managerName names the password manager a mode reads from, empty for
+// modes that keep the secret in sshr or nowhere
+func managerName(mode string) string {
+	switch mode {
+	case PasswordOnePassword:
+		return "1Password"
+	case PasswordBitwarden:
+		return "Bitwarden"
+	}
+	return ""
 }
 
 // Duplicate saves a copy of host id under a new ID and name, its saved
@@ -593,6 +626,14 @@ func Unlock(h *Host) error {
 		h.Password = string(pw)
 		return nil
 	}
+	if h.PasswordMode == PasswordBitwarden {
+		pw, err := bwPassword(h.PasswordRef)
+		if err != nil {
+			return err
+		}
+		h.Password = string(pw)
+		return nil
+	}
 	if h.PasswordMode != PasswordSaved {
 		return nil
 	}
@@ -662,5 +703,5 @@ func newID() (string, error) {
 // PasswordFromSshr tells whether sshr hands the password to ssh, from the
 // vault or from 1Password
 func (h *Host) PasswordFromSshr() bool {
-	return h.Key == "" && (h.PasswordMode == PasswordSaved || h.PasswordMode == PasswordOnePassword)
+	return h.Key == "" && (h.PasswordMode == PasswordSaved || h.PasswordMode == PasswordOnePassword || h.PasswordMode == PasswordBitwarden)
 }

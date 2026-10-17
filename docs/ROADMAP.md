@@ -19,6 +19,7 @@ Passwords and keys
 - private keys kept inside sshr, passphrase keys included ([#12](https://github.com/klovbin/sshr/issues/12))
 - passwords and keys read from 1Password, new 1Password items from the app ([#13](https://github.com/klovbin/sshr/issues/13))
 - keys from an ssh agent, the 1Password SSH agent included ([#5](https://github.com/klovbin/sshr/issues/5))
+- passwords and keys read from Bitwarden with `bw` ([#20](https://github.com/klovbin/sshr/issues/20))
 
 Moving hosts in and out
 
@@ -49,18 +50,17 @@ Needed before a release
 
 Features
 
-4. Bitwarden for passwords and keys, like 1Password ([#20](https://github.com/klovbin/sshr/issues/20))
-5. Drag and drop files onto a host in the app ([#32](https://github.com/klovbin/sshr/issues/32))
-6. Fall back to a gateway when the direct connection fails ([#28](https://github.com/klovbin/sshr/issues/28))
-7. Local commands before and after connect, their fields go on the #30 list ([#29](https://github.com/klovbin/sshr/issues/29))
-8. Import from PuTTY, MobaXterm, Remmina, Termius, Royal TS, through the #30 list ([#34](https://github.com/klovbin/sshr/issues/34))
+4. Drag and drop files onto a host in the app ([#32](https://github.com/klovbin/sshr/issues/32))
+5. Fall back to a gateway when the direct connection fails ([#28](https://github.com/klovbin/sshr/issues/28))
+6. Local commands before and after connect, their fields go on the #30 list ([#29](https://github.com/klovbin/sshr/issues/29))
+7. Import from PuTTY, MobaXterm, Remmina, Termius, Royal TS, through the #30 list ([#34](https://github.com/klovbin/sshr/issues/34))
 
 Later
 
-9. sshr on iOS and Android, ssh in process, keys in the phone's keystore, joins sync like any device ([#25](https://github.com/klovbin/sshr/issues/25))
-10. Sync: automatic background sync, a paper recovery key, pairing by QR code
-11. Sync without a server: device to device over the local network or the user's own WireGuard tunnel, TLS 1.3 with device keys pinned at pairing
-12. Optional hardware keys (YubiKey, FIDO2 `ed25519-sk`), not required
+8. sshr on iOS and Android, ssh in process, keys in the phone's keystore, joins sync like any device ([#25](https://github.com/klovbin/sshr/issues/25))
+9. Sync: automatic background sync, a paper recovery key, pairing by QR code
+10. Sync without a server: device to device over the local network or the user's own WireGuard tunnel, TLS 1.3 with device keys pinned at pairing
+11. Optional hardware keys (YubiKey, FIDO2 `ed25519-sk`), not required
 
 ## Not planned
 

@@ -158,7 +158,7 @@ func (s *Store) exportBlock(h *Host, alias string, aliasOf map[string]string) (b
 		}
 	case h.agentKey():
 		note = "the key is kept in sshr, plain ssh does not get it, connect with sshr"
-	case h.PasswordMode == PasswordSaved || h.PasswordMode == PasswordOnePassword:
+	case h.PasswordMode == PasswordSaved || h.PasswordMode == PasswordOnePassword || h.PasswordMode == PasswordBitwarden:
 		note = "the password is kept in sshr, plain ssh asks for it"
 	}
 	if parts := SplitJump(h.Jump); len(parts) > 0 {

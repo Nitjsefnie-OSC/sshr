@@ -49,9 +49,9 @@ func attachPassword(cmd *exec.Cmd, h *Host) (func(), error) {
 		return noop, nil
 	}
 	if err := Unlock(h); err != nil {
-		// 1Password missing or locked, ssh asks on the terminal instead,
+		// the password manager is missing or locked, ssh asks on the terminal instead,
 		// with no terminal there is nobody to ask
-		if h.PasswordMode == PasswordOnePassword {
+		if h.PasswordMode == PasswordOnePassword || h.PasswordMode == PasswordBitwarden {
 			if in, _, terr := openTerminal(); terr == nil {
 				in.Close()
 				fmt.Fprintf(os.Stderr, "sshr: %v, type the password\n", err)
