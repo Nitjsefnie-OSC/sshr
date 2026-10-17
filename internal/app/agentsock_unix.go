@@ -30,3 +30,8 @@ func listenAgent(name string) (ln net.Listener, sock string, cleanup func(), err
 		cleanDir()
 	}, nil
 }
+
+// dialAgent connects to an agent socket
+func dialAgent(sock string) (net.Conn, error) {
+	return net.Dial("unix", sock)
+}

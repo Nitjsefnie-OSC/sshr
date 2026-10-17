@@ -16,3 +16,8 @@ func listenAgent(name string) (ln net.Listener, sock string, cleanup func(), err
 	}
 	return ln, sock, func() { ln.Close() }, nil
 }
+
+// dialAgent connects to an agent pipe
+func dialAgent(sock string) (net.Conn, error) {
+	return winio.DialPipe(sock, nil)
+}

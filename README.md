@@ -169,6 +169,21 @@ sshr add web -u deploy --key-stdin < key   # asks for the passphrase on the term
 - the public half is kept next to the host file (`~/.sshr/vault/hosts/<id>.pub`), the host form and `sshr add` show its fingerprint
 - a jump hop gets your own `SSH_AUTH_SOCK` back
 
+## Keys from an ssh agent
+
+A host can take its key from an ssh agent instead of a key file, the agent of your session, the 1Password SSH agent or any other agent socket (Bitwarden, KeePassXC, a hardware key agent), the key never leaves the agent
+
+```sh
+sshr add web -u deploy --agent                          # the agent in SSH_AUTH_SOCK
+sshr add web -u deploy --agent 1password --agent-key work
+sshr add web -u deploy --agent /path/to/agent.sock --agent-key SHA256:GORl...
+```
+
+- `1password` is `~/.1password/agent.sock` on Linux, `~/Library/Group Containers/2BUA8C4S2C.com.1password/t/agent.sock` on macOS and `\\.\pipe\openssh-ssh-agent` on Windows, as in the 1Password setup guide
+- `--agent-key` picks one key by fingerprint, comment or a unique part of either, sshr asks the agent once and keeps that public key, ssh then gets `-i <id>.pub -o IdentitiesOnly=yes` and offers only it, OpenSSH servers stop after about six tries, so an agent with many keys fails without it
+- without `--agent-key` and with several keys in the agent, `sshr add` lists them and asks which one, with no terminal every key is offered
+- in the host form choose **SSH agent**, the agent field is empty, `1password` or a socket path, the key field takes a fingerprint or comment
+
 ## Passwords and keys in 1Password
 
 A host can keep its password or key in 1Password instead of this machine, sshr reads it with the [1Password CLI](https://developer.1password.com/docs/cli/get-started/) (`op`) on every connect and keeps only the reference, it is **off by default**, a host uses it only when you choose 1Password for it, because it needs `op` installed and signed in, and each connect waits for `op`, a locked app asks for a fingerprint or the account password
@@ -230,9 +245,9 @@ In the order we intend to build them (reasons in [docs/WHY.md](docs/WHY.md)):
    - connection reuse with `ControlMaster`/`ControlPersist`, off by default - done ([#22](https://github.com/klovbin/sshr/issues/22)),
    - sending clipboard images to the server — done ([#26](https://github.com/klovbin/sshr/issues/26));
    - mosh, off by default — done ([#23](https://github.com/klovbin/sshr/issues/23)).
-3. Password handling: saved encrypted with a key from the system keychain or asked every time - done ([#6](https://github.com/klovbin/sshr/issues/6)), keys stored inside sshr - done ([#12](https://github.com/klovbin/sshr/issues/12)), passwords and keys in 1Password - done ([#13](https://github.com/klovbin/sshr/issues/13))
+3. Password handling: saved encrypted with a key from the system keychain or asked every time - done ([#6](https://github.com/klovbin/sshr/issues/6)), keys stored inside sshr - done ([#12](https://github.com/klovbin/sshr/issues/12)), passwords and keys in 1Password - done ([#13](https://github.com/klovbin/sshr/issues/13)), keys from ssh agents including 1Password - done ([#5](https://github.com/klovbin/sshr/issues/5))
 4. Installer with OS detection and PATH setup, `install.sh` for Linux and macOS - done ([#2](https://github.com/klovbin/sshr/issues/2)), then packages for AUR, Homebrew, Scoop and nixpkgs ([#17](https://github.com/klovbin/sshr/issues/17))
-5. Sync with key services: 1Password, Bitwarden, ssh-agent ([#14](https://github.com/klovbin/sshr/issues/14))
+5. Sync with key services: 1Password, Bitwarden, ssh-agent - done ([#5](https://github.com/klovbin/sshr/issues/5), [#13](https://github.com/klovbin/sshr/issues/13))
 6. REST API ([#12](https://github.com/klovbin/sshr/issues/12)) and MCP server ([#13](https://github.com/klovbin/sshr/issues/13)) for integrations and AI assistants
 7. GitHub / git vault sync across machines (see the zero-knowledge idea below)
 

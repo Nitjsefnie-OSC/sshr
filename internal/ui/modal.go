@@ -77,7 +77,12 @@ func (s *state) openEditForm(h sshrapp.Host) {
 	s.passEd.SetText("")
 	s.keyRefEd.SetText(h.KeyRef)
 	s.passRefEd.SetText(h.PasswordRef)
-	if h.KeyMode == sshrapp.KeyOnePassword {
+	if h.KeyMode == sshrapp.KeyAgent {
+		s.authKind = authAgent
+		s.keyEd.SetText("")
+		s.agentEd.SetText(h.Agent)
+		s.agentKeyEd.SetText(h.KeyFingerprint())
+	} else if h.KeyMode == sshrapp.KeyOnePassword {
 		s.authKind = authOP
 		s.keyEd.SetText("")
 	} else if h.KeyMode == sshrapp.KeyVault {

@@ -13,6 +13,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"golang.org/x/crypto/ssh"
 	"golang.org/x/term"
 
 	"sshr.dev/internal/app"
@@ -102,6 +103,8 @@ func cmdList(store *app.Store) {
 			keyCol = "key (sshr)"
 		case h.KeyMode == app.KeyOnePassword:
 			keyCol = "key (1password)"
+		case h.KeyMode == app.KeyAgent:
+			keyCol = "agent (" + agentLabel(h.Agent) + ")"
 		case h.PasswordMode == app.PasswordOnePassword:
 			keyCol = "password (1password)"
 		case h.PasswordMode == app.PasswordSaved:
@@ -124,6 +127,10 @@ func cmdAdd(store *app.Store, args []string) {
 	// 1Password: --op-password / --op-key link existing items,
 	// --store 1password creates an item from the password typed now
 	var opPassword, opKey, store1, opVault string
+	// --agent system|1password|<socket> keeps the key in an ssh agent,
+	// --agent-key picks one of its keys
+	var agentName, agentKey string
+	useAgent := false
 	port := 22
 	positional := make([]string, 0)
 
@@ -153,6 +160,14 @@ func cmdAdd(store *app.Store, args []string) {
 			askPassword = true
 		} else if a == "--key-stdin" {
 			keyStdin = true
+		} else if a == "--agent" && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			i++
+			useAgent, agentName = true, args[i]
+		} else if a == "--agent" {
+			useAgent = true
+		} else if a == "--agent-key" && i+1 < len(args) {
+			i++
+			agentKey = args[i]
 		} else if (a == "--op-password" || a == "--op-key" || a == "--store" || a == "--op-vault") && i+1 < len(args) {
 			i++
 			switch a {
@@ -186,7 +201,7 @@ func cmdAdd(store *app.Store, args []string) {
 		host = positional[0]
 	}
 	if host == "" {
-		fmt.Fprintln(os.Stderr, "Usage: sshr add <host> -u <user> [-n <name>] [-p <port>] [-k <key> | --key-stdin | --no-key | --ask-password] [-J <jump>] [--session tmux|zellij]")
+		fmt.Fprintln(os.Stderr, "Usage: sshr add <host> -u <user> [-n <name>] [-p <port>] [-k <key> | --key-stdin | --agent [name] | --no-key | --ask-password] [-J <jump>] [--session tmux|zellij]")
 		os.Exit(1)
 	}
 	if user == "" {
@@ -209,8 +224,12 @@ func cmdAdd(store *app.Store, args []string) {
 		fmt.Fprintf(os.Stderr, "sshr add: --store takes sshr or 1password, got %q\n", store1)
 		os.Exit(1)
 	}
-	if n := countTrue(key != "", noKey, askPassword, keyStdin, opPassword != "", opKey != ""); n > 1 {
-		fmt.Fprintln(os.Stderr, "sshr add: choose one of -k, --key-stdin, --no-key, --ask-password, --op-password, --op-key")
+	if n := countTrue(key != "", noKey, askPassword, keyStdin, opPassword != "", opKey != "", useAgent); n > 1 {
+		fmt.Fprintln(os.Stderr, "sshr add: choose one of -k, --key-stdin, --no-key, --ask-password, --op-password, --op-key, --agent")
+		os.Exit(1)
+	}
+	if agentKey != "" && !useAgent {
+		fmt.Fprintln(os.Stderr, "sshr add: --agent-key needs --agent")
 		os.Exit(1)
 	}
 	if opVault != "" {
@@ -221,7 +240,12 @@ func cmdAdd(store *app.Store, args []string) {
 	}
 	var password, passwordMode, keyMode, keyRef, passwordRef string
 	var keyData []byte
-	if opPassword != "" {
+	if useAgent {
+		keyMode = app.KeyAgent
+		if agentKey == "" {
+			agentKey = promptAgentKey(agentName)
+		}
+	} else if opPassword != "" {
 		passwordMode, passwordRef = app.PasswordOnePassword, opPassword
 	} else if opKey != "" {
 		keyMode, keyRef = app.KeyOnePassword, opKey
@@ -251,6 +275,7 @@ func cmdAdd(store *app.Store, args []string) {
 	in := app.Host{
 		Name: name, Host: host, User: user, Port: port,
 		Key: key, KeyData: keyData, KeyMode: keyMode, KeyRef: keyRef,
+		Agent: agentName, AgentKey: agentKey,
 		PasswordMode: passwordMode, Password: password, PasswordRef: passwordRef,
 		Jump: jump, Session: session,
 	}
@@ -273,6 +298,11 @@ func cmdAdd(store *app.Store, args []string) {
 		msg += " key stored in sshr (" + h.KeyFingerprint() + ")"
 	} else if h.KeyMode == app.KeyOnePassword {
 		msg += " key in 1Password (" + h.KeyFingerprint() + ")"
+	} else if h.KeyMode == app.KeyAgent {
+		msg += " key from the " + agentLabel(h.Agent) + " agent"
+		if fp := h.KeyFingerprint(); fp != "" {
+			msg += " (" + fp + ")"
+		}
 	} else if h.PasswordMode == app.PasswordOnePassword {
 		msg += " auth=password in 1Password (" + h.PasswordRef + ")"
 	} else if h.PasswordMode == app.PasswordSaved {
@@ -502,7 +532,8 @@ Usage:
   sshr                              open GUI
   sshr list                         list saved hosts
   sshr add <host> -u <user> [-n <name>] [-p <port>]
-           [-k <key> | --key-stdin | --no-key | --ask-password] [-J <jump>]
+           [-k <key> | --key-stdin | --agent [name] | --no-key | --ask-password]
+           [-J <jump>]
            [--session tmux|zellij]
                                     add a host (asks for the auth method
                                     unless -k, --no-key or --ask-password
@@ -519,6 +550,10 @@ Usage:
                                     connect, --no-key --store 1password
                                     creates a 1Password item from the
                                     password (--op-vault <name>),
+                                    --agent [system|1password|<socket>]
+                                    uses a key from an ssh agent,
+                                    --agent-key <fingerprint|comment>
+                                    picks one of its keys,
                                     -J a,b goes through jump hosts: saved
                                     host names or [user@]host[:port],
                                     --session attaches to tmux/zellij
@@ -596,6 +631,40 @@ func promptKeyPaste(scanner *bufio.Scanner) []byte {
 	fmt.Fprintln(os.Stderr, "sshr add: no -----END line, the key is incomplete")
 	os.Exit(1)
 	return nil
+}
+
+func agentLabel(name string) string {
+	if name == "" {
+		return "system"
+	}
+	return name
+}
+
+// promptAgentKey lets the user pick one key when the agent has several and
+// there is a terminal, with no choice ssh is offered every key
+func promptAgentKey(name string) string {
+	keys, err := app.AgentKeys(name)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sshr add: %v, saving without a key choice\n", err)
+		return ""
+	}
+	if len(keys) < 2 || !term.IsTerminal(int(os.Stdin.Fd())) {
+		return ""
+	}
+	fmt.Println("\nThe agent has several keys, servers stop after about six tries:")
+	for i, k := range keys {
+		fmt.Printf("  [%d] %s %s\n", i+1, ssh.FingerprintSHA256(k), k.Comment)
+	}
+	fmt.Printf("  [0] offer all of them\n\nChoice: ")
+	n, err := strconv.Atoi(readAnswer(bufio.NewScanner(os.Stdin)))
+	if err != nil || n < 0 || n > len(keys) {
+		fmt.Fprintln(os.Stderr, "sshr add: invalid choice")
+		os.Exit(1)
+	}
+	if n == 0 {
+		return ""
+	}
+	return ssh.FingerprintSHA256(keys[n-1])
 }
 
 func countTrue(bs ...bool) int {

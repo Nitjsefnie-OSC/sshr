@@ -79,6 +79,12 @@ type Host struct {
 	// KeyRef is the 1Password secret reference of the private key of an
 	// SSH Key item, op://vault/item/private key, for KeyOnePassword
 	KeyRef string `json:"key_ref,omitempty"`
+	// Agent is the agent of a KeyAgent host, system (empty), 1password or
+	// the path of an agent socket
+	Agent string `json:"agent,omitempty"`
+	// AgentKey picks one key of the agent by fingerprint or comment when
+	// saving, it is turned into KeyPub and not stored
+	AgentKey string `json:"-"`
 	// PasswordMode is PasswordSaved, PasswordAsk, PasswordOnePassword or
 	// empty
 	PasswordMode string `json:"password_mode,omitempty"`
@@ -187,6 +193,9 @@ func cleanHost(h Host) (Host, error) {
 	if h.KeyMode != KeyOnePassword {
 		h.KeyRef = ""
 	}
+	if h.KeyMode != KeyAgent {
+		h.Agent, h.AgentKey = "", ""
+	}
 	switch h.KeyMode {
 	case "":
 		h.KeyData, h.KeyPassphrase, h.KeySealed, h.KeyPub = nil, "", "", ""
@@ -196,6 +205,11 @@ func cleanHost(h Host) (Host, error) {
 			if err := prepareVaultKey(&h); err != nil {
 				return h, err
 			}
+		}
+	case KeyAgent:
+		h.Key, h.KeyData, h.KeyPassphrase, h.KeySealed = "", nil, "", ""
+		if err := prepareAgentKey(&h); err != nil {
+			return h, err
 		}
 	case KeyOnePassword:
 		h.Key, h.KeyData, h.KeyPassphrase, h.KeySealed = "", nil, "", ""

@@ -186,7 +186,7 @@ func attachAgentKey(cmd *exec.Cmd, h *Host) (func(), error) {
 // it is not secret
 func (s *Store) writePub(h *Host) error {
 	path := s.pubPath(h)
-	if !h.agentKey() {
+	if !h.agentKey() && !(h.KeyMode == KeyAgent && h.KeyPub != "") {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
 		}

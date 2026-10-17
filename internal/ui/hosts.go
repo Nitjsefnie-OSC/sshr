@@ -30,6 +30,8 @@ func layoutHostsList(gtx layout.Context, th *material.Theme, s *state) layout.Di
 			authLabel = s.t("auth.vault.short")
 		case h.KeyMode == sshrapp.KeyOnePassword:
 			authLabel = s.t("auth.opKey.short")
+		case h.KeyMode == sshrapp.KeyAgent:
+			authLabel = s.t("auth.agent.short")
 		case h.PasswordMode == sshrapp.PasswordOnePassword:
 			authLabel = s.t("auth.opPass.short")
 		case h.PasswordMode == sshrapp.PasswordSaved:
@@ -121,7 +123,20 @@ func layoutForm(gtx layout.Context, th *material.Theme, s *state) layout.Dimensi
 			return layoutAuthPicker(gtx, th, s)
 		}),
 	}
-	if s.authKind == authOP {
+	if s.authKind == authAgent {
+		children = append(children, spacer(10), field(th, s.t("field.agent"), &s.agentEd),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				l := material.Caption(th, s.t("field.agent.hint"))
+				l.Color = colMuted
+				return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, l.Layout)
+			}),
+			spacer(10), field(th, s.t("field.agentKey"), &s.agentKeyEd),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				l := material.Caption(th, s.t("field.agentKey.hint"))
+				l.Color = colMuted
+				return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, l.Layout)
+			}))
+	} else if s.authKind == authOP {
 		children = append(children, spacer(10), field(th, s.t("field.keyRef"), &s.keyRefEd),
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				l := material.Caption(th, s.t("field.keyRef.hint"))
@@ -236,6 +251,12 @@ func layoutPassModePicker(gtx layout.Context, th *material.Theme, s *state) layo
 }
 
 func layoutAuthPicker(gtx layout.Context, th *material.Theme, s *state) layout.Dimensions {
+	choice := func(btn *widget.Clickable, label string, kind authKind) layout.FlexChild {
+		return layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return authChoiceBtn(gtx, th, btn, label, s.authKind == kind)
+		})
+	}
+	gap := layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout)
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			l := material.Caption(th, s.t("field.auth"))
@@ -243,23 +264,20 @@ func layoutAuthPicker(gtx layout.Context, th *material.Theme, s *state) layout.D
 			return l.Layout(gtx)
 		}),
 		layout.Rigid(layout.Spacer{Height: unit.Dp(6)}.Layout),
+		// two rows, five buttons in one row are too narrow for their labels
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{}.Layout(gtx,
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return authChoiceBtn(gtx, th, &s.authPassBtn, s.t("auth.password"), s.authKind == authPassword)
-				}),
-				layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return authChoiceBtn(gtx, th, &s.authKeyBtn, s.t("auth.key"), s.authKind == authKey)
-				}),
-				layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return authChoiceBtn(gtx, th, &s.authVaultBtn, s.t("auth.vault"), s.authKind == authVault)
-				}),
-				layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
-				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-					return authChoiceBtn(gtx, th, &s.authOPBtn, s.t("auth.opKey"), s.authKind == authOP)
-				}),
+				choice(&s.authPassBtn, s.t("auth.password"), authPassword), gap,
+				choice(&s.authKeyBtn, s.t("auth.key"), authKey), gap,
+				choice(&s.authVaultBtn, s.t("auth.vault"), authVault),
+			)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(8)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layout.Flex{}.Layout(gtx,
+				choice(&s.authOPBtn, s.t("auth.opKey"), authOP), gap,
+				choice(&s.authAgentBtn, s.t("auth.agent"), authAgent), gap,
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions { return layout.Dimensions{} }),
 			)
 		}),
 	)

@@ -40,6 +40,8 @@ const (
 	authVault
 	// authOP is the key of an SSH Key item in 1Password
 	authOP
+	// authAgent is a key that stays in an ssh agent
+	authAgent
 )
 
 // state holds UI widgets, vault data, and transient status/errors.
@@ -66,6 +68,9 @@ type state struct {
 	authKeyBtn   widget.Clickable
 	authVaultBtn widget.Clickable
 	authOPBtn    widget.Clickable
+	authAgentBtn widget.Clickable
+	agentEd      widget.Editor // system, 1password or a socket path
+	agentKeyEd   widget.Editor // fingerprint or comment of one agent key
 	keyRefEd     widget.Editor // op:// reference of a 1Password key
 	passRefEd    widget.Editor // op:// reference of a 1Password password
 	passOPBtn    widget.Clickable
@@ -208,6 +213,9 @@ func (s *state) handle(gtx layout.Context) {
 	if s.authOPBtn.Clicked(gtx) {
 		s.authKind = authOP
 	}
+	if s.authAgentBtn.Clicked(gtx) {
+		s.authKind = authAgent
+	}
 	if s.passOPBtn.Clicked(gtx) {
 		s.passMode = sshrapp.PasswordOnePassword
 	}
@@ -323,6 +331,8 @@ func (s *state) clearForm() {
 	s.keyPassEd.SetText("")
 	s.keyRefEd.SetText("")
 	s.passRefEd.SetText("")
+	s.agentEd.SetText("")
+	s.agentKeyEd.SetText("")
 	s.form.editID = ""
 	s.form.vaultKeyPrint = ""
 	s.form.hasSavedPassword = false
@@ -355,6 +365,16 @@ func (s *state) mapErr(err error) string {
 	}
 }
 
+// editedHost is the saved host the form edits, nil for a new one
+func (s *state) editedHost() *sshrapp.Host {
+	for i := range s.hosts {
+		if s.form.editID != "" && s.hosts[i].ID == s.form.editID {
+			return &s.hosts[i]
+		}
+	}
+	return nil
+}
+
 func (s *state) saveHost() {
 	port := 22
 	if p := strings.TrimSpace(s.portEd.Text()); p != "" {
@@ -369,8 +389,17 @@ func (s *state) saveHost() {
 	password := ""
 	passMode := ""
 	keyMode, passphrase, keyRef, passRef := "", "", "", ""
+	agentName, agentKey, keyPub := "", "", ""
 	var keyData []byte
-	if s.authKind == authOP {
+	if s.authKind == authAgent {
+		keyMode = sshrapp.KeyAgent
+		agentName = strings.TrimSpace(s.agentEd.Text())
+		agentKey = strings.TrimSpace(s.agentKeyEd.Text())
+		// the key chosen before is kept without asking the agent again
+		if cur := s.editedHost(); cur != nil && cur.KeyMode == sshrapp.KeyAgent && cur.Agent == agentName && agentKey != "" && agentKey == cur.KeyFingerprint() {
+			agentKey, keyPub = "", cur.KeyPub
+		}
+	} else if s.authKind == authOP {
 		keyMode = sshrapp.KeyOnePassword
 		keyRef = strings.TrimSpace(s.keyRefEd.Text())
 		if keyRef == "" {
@@ -432,6 +461,9 @@ func (s *state) saveHost() {
 		KeyData:       keyData,
 		KeyPassphrase: passphrase,
 		KeyRef:        keyRef,
+		Agent:         agentName,
+		AgentKey:      agentKey,
+		KeyPub:        keyPub,
 		PasswordRef:   passRef,
 		PasswordMode:  passMode,
 		Password:      password,
