@@ -39,6 +39,21 @@ or `sh install.sh` from a checkout, options in `sh install.sh --help`
 
 Packages for AUR, Homebrew, Scoop and nixpkgs are planned ([#17](https://github.com/klovbin/sshr/issues/17)), on Windows build with `go build -o sshr.exe ./cmd/sshr` for now
 
+## Importing ~/.ssh/config
+
+```sh
+sshr import-ssh-config --dry-run   # show what would be added
+sshr import-ssh-config             # add it
+```
+
+In the app: **Settings → Import → Import from ~/.ssh/config**
+
+- every `Host` name of `~/.ssh/config` and the files it `Include`s (globs, relative paths from `~/.ssh`, a file that includes itself is read once) becomes a host, patterns with `*`, `?` or `!` are rules, not hosts, and are skipped
+- each name is resolved with `ssh -G`, so ssh itself applies `Match`, `Include`, `Host *` and defaults, nothing is sent over the network, only your own config is read, `Match exec` runs what you wrote there, as on every connect
+- carried over: `HostName`, `User`, `Port`, `IdentityFile` (the first that exists and is a private key, only when you set it), `IdentityAgent` (the 1Password socket becomes the `1password` agent), `ProxyJump`, `LocalForward`, `RemoteForward` and `DynamicForward` as named forwards `l1`, `r1`, `d1`
+- a host with `ProxyCommand` is saved with the alias as its address, so ssh keeps applying that config block on connect, unix socket forwards are skipped, each such case is listed
+- a host whose name, or address, user and port, sshr has already is skipped, running it again adds only what is new
+
 ## Connecting with mosh
 
 [mosh](https://mosh.org) keeps a session alive when your network changes or your laptop sleeps, and shows what you type immediately even on a slow link. It is **off by default**, because it has real costs:

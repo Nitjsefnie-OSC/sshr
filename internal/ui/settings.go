@@ -35,6 +35,33 @@ func layoutSettings(gtx layout.Context, th *material.Theme, s *state) layout.Dim
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layoutConnectionSection(gtx, th, s)
 		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(24)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layoutImportSection(gtx, th, s)
+		}),
+	)
+}
+
+// layoutImportSection brings hosts in from ~/.ssh/config
+func layoutImportSection(gtx layout.Context, th *material.Theme, s *state) layout.Dimensions {
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			l := material.Body1(th, s.t("settings.import"))
+			l.Font.Weight = 600
+			return l.Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(10)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			b := material.Button(th, &s.importBtn, s.t("btn.importSSHConfig"))
+			b.Background = colAccent
+			return b.Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			l := material.Caption(th, s.t("settings.import.hint"))
+			l.Color = colMuted
+			return l.Layout(gtx)
+		}),
 	)
 }
 

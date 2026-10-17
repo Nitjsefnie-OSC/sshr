@@ -101,6 +101,9 @@ type state struct {
 	hostDelBtns  []widget.Clickable // parallel to hosts
 	hostEditBtns []widget.Clickable // parallel to hosts
 	uploads      chan uploadResult  // finished image uploads from goroutines
+	importBtn    widget.Clickable
+	importing    bool
+	imports      chan importResult
 	uploading    bool
 	modal        confirmModal // delete confirm
 	form         formModal    // add/edit host
@@ -260,6 +263,10 @@ func (s *state) handle(gtx layout.Context) {
 		}
 	}
 	s.finishUploads(gtx)
+	s.finishImport(gtx)
+	if s.importBtn.Clicked(gtx) {
+		s.startImport()
+	}
 	if s.modal.open {
 		_ = s.modal.card.Clicked(gtx) // absorb; never dismiss
 		if s.modal.scrim.Clicked(gtx) {

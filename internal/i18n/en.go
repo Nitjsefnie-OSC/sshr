@@ -97,6 +97,11 @@ var en = map[string]string{
 	"err.opPassword_required": "enter an op:// reference or a password for a new item",
 	"err.noOP":                "the 1Password CLI (op) is not installed",
 	"err.keyPassphrase":       "the key has a passphrase, enter it",
+	"settings.import":         "Import",
+	"settings.import.hint":    "Adds the hosts of ~/.ssh/config and the files it includes with their keys, agent, jump hosts and forwards, hosts sshr already has are skipped",
+	"btn.importSSHConfig":     "Import from ~/.ssh/config",
+	"status.importing":        "Reading ~/.ssh/config…",
+	"status.imported":         "Imported %d hosts, skipped %d",
 	"err.noKeychain":          "no system keychain to encrypt the password with, choose Ask every time or a key file",
 	"err.asksPassword":        "this host asks for its password every time, send from the terminal with sshr paste",
 }

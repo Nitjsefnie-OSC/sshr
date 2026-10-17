@@ -97,6 +97,11 @@ var ru = map[string]string{
 	"err.opPassword_required": "укажи ссылку op:// или пароль для новой записи",
 	"err.noOP":                "не установлен 1Password CLI (op)",
 	"err.keyPassphrase":       "у ключа есть пароль, введи его",
+	"settings.import":         "Импорт",
+	"settings.import.hint":    "Добавляет хосты из ~/.ssh/config и подключённых в нём файлов вместе с ключами, агентом, бастионами и пробросами, хосты, которые уже есть в sshr, пропускаются",
+	"btn.importSSHConfig":     "Импорт из ~/.ssh/config",
+	"status.importing":        "Читаю ~/.ssh/config…",
+	"status.imported":         "Импортировано хостов: %d, пропущено: %d",
 	"err.noKeychain":          "нет системной связки ключей, чтобы зашифровать пароль, выбери «Спрашивать каждый раз» или файл ключа",
 	"err.asksPassword":        "этот хост спрашивает пароль каждый раз, отправь из терминала через sshr paste",
 }

@@ -78,6 +78,8 @@ func runCLI(args []string) {
 		cmdServe(store, args[1:])
 	case "sync":
 		cmdSync(store, args[1:])
+	case "import-ssh-config":
+		cmdImportSSHConfig(store, args[1:])
 	case app.ProxyCommandName:
 		cmdProxy(store, args[1:])
 	case "help", "--help", "-h":
@@ -601,6 +603,10 @@ Usage:
   sshr sync [init|invite|join|pending|approve|pull|push|status|
             remove-device|leave]   sync hosts through an sshr-sync server,
                                     end to end encrypted, see sshr sync help
+  sshr import-ssh-config [--dry-run]
+                                    add the hosts of ~/.ssh/config with
+                                    keys, agent, jump hosts and forwards,
+                                    saved hosts are skipped
   sshr help                         show this help
 
   --reuse / --no-reuse              with any command that connects: share
@@ -851,4 +857,52 @@ func findFailed(cmd, query string, err error) {
 func fatal(err error) {
 	fmt.Fprintf(os.Stderr, "sshr: %v\n", err)
 	os.Exit(1)
+}
+
+// cmdImportSSHConfig adds the hosts of ~/.ssh/config
+func cmdImportSSHConfig(store *app.Store, args []string) {
+	dry := false
+	for _, a := range args {
+		if a != "--dry-run" {
+			fmt.Fprintln(os.Stderr, "Usage: sshr import-ssh-config [--dry-run]")
+			os.Exit(1)
+		}
+		dry = true
+	}
+	items, err := store.ImportSSHConfig(dry)
+	if err != nil {
+		fatal(err)
+	}
+	added := 0
+	for _, it := range items {
+		switch {
+		case it.Host != nil:
+			added++
+			h := it.Host
+			line := fmt.Sprintf("+ %s  %s@%s:%d", h.Name, h.User, h.Host, h.Port)
+			switch {
+			case h.Key != "":
+				line += "  key " + h.Key
+			case h.KeyMode == app.KeyAgent:
+				line += "  agent " + agentLabel(h.Agent)
+			}
+			if h.Jump != "" {
+				line += "  via " + h.Jump
+			}
+			if len(h.Forwards) > 0 {
+				line += fmt.Sprintf("  %d forwards", len(h.Forwards))
+			}
+			fmt.Println(line)
+		default:
+			fmt.Printf("- %s  %s\n", it.Alias, it.Skipped)
+		}
+		for _, n := range it.Notes {
+			fmt.Printf("    %s\n", n)
+		}
+	}
+	if dry {
+		fmt.Printf("%d hosts would be added, nothing was saved (--dry-run)\n", added)
+	} else {
+		fmt.Printf("Added %d hosts\n", added)
+	}
 }
