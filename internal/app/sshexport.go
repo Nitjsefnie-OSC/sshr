@@ -189,17 +189,33 @@ func (s *Store) exportBlock(h *Host, alias string, aliasOf map[string]string) (b
 // includeLine is the line of ~/.ssh/config that reads the export
 func (s *Store) includeLine() string {
 	p := s.SSHConfigOut
+	// "~/" is read the same by Windows OpenSSH and by the msys ssh of Git
+	// for Windows, which takes C:/... as relative to ~/.ssh, both paths
+	// are resolved first, Windows may give one of them as a short 8.3
+	// name (C:\Users\RUNNER~1) and a link on Linux hides the home prefix
 	if home, err := os.UserHomeDir(); err == nil {
-		if rel, err := filepath.Rel(home, p); err == nil && !strings.HasPrefix(rel, "..") {
+		if rel, err := filepath.Rel(realPath(home), realPath(p)); err == nil && !strings.HasPrefix(rel, "..") {
 			p = "~/" + filepath.ToSlash(rel)
 		}
 	}
-	// Windows OpenSSH reads C:/Users/... but not C:\Users\... in Include
+	// ssh reads a backslash in its config as an escape
 	p = filepath.ToSlash(p)
 	if strings.ContainsAny(p, " \t") {
 		p = `"` + p + `"`
 	}
 	return "Include " + p
+}
+
+// realPath resolves links and short names of p, or of its folder when p
+// does not exist yet
+func realPath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	if r, err := filepath.EvalSymlinks(filepath.Dir(p)); err == nil {
+		return filepath.Join(r, filepath.Base(p))
+	}
+	return p
 }
 
 // ErrSSHConfigLink means ~/.ssh/config is a link, it is managed by
