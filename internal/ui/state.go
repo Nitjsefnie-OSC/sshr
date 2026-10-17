@@ -38,6 +38,8 @@ const (
 	authKey
 	// authVault is a private key pasted into the form, stored in sshr
 	authVault
+	// authOP is the key of an SSH Key item in 1Password
+	authOP
 )
 
 // state holds UI widgets, vault data, and transient status/errors.
@@ -63,6 +65,10 @@ type state struct {
 	authPassBtn  widget.Clickable
 	authKeyBtn   widget.Clickable
 	authVaultBtn widget.Clickable
+	authOPBtn    widget.Clickable
+	keyRefEd     widget.Editor // op:// reference of a 1Password key
+	passRefEd    widget.Editor // op:// reference of a 1Password password
+	passOPBtn    widget.Clickable
 	keyPasteEd   widget.Editor // pasted private key
 	keyPassEd    widget.Editor // its passphrase, if any
 	// passMode is sshrapp.PasswordSaved or sshrapp.PasswordAsk
@@ -199,6 +205,12 @@ func (s *state) handle(gtx layout.Context) {
 	if s.authVaultBtn.Clicked(gtx) {
 		s.authKind = authVault
 	}
+	if s.authOPBtn.Clicked(gtx) {
+		s.authKind = authOP
+	}
+	if s.passOPBtn.Clicked(gtx) {
+		s.passMode = sshrapp.PasswordOnePassword
+	}
 	if s.passSavedBtn.Clicked(gtx) {
 		s.passMode = sshrapp.PasswordSaved
 	}
@@ -309,6 +321,8 @@ func (s *state) clearForm() {
 	s.passMode = sshrapp.PasswordSaved
 	s.keyPasteEd.SetText("")
 	s.keyPassEd.SetText("")
+	s.keyRefEd.SetText("")
+	s.passRefEd.SetText("")
 	s.form.editID = ""
 	s.form.vaultKeyPrint = ""
 	s.form.hasSavedPassword = false
@@ -334,6 +348,8 @@ func (s *state) mapErr(err error) string {
 		return s.t("err.keyPassphrase")
 	case errors.Is(err, sshrapp.ErrKeyRequired):
 		return s.t("err.keyPaste_required")
+	case errors.Is(err, sshrapp.ErrNoOP):
+		return s.t("err.noOP")
 	default:
 		return err.Error()
 	}
@@ -352,9 +368,16 @@ func (s *state) saveHost() {
 	key := ""
 	password := ""
 	passMode := ""
-	keyMode, passphrase := "", ""
+	keyMode, passphrase, keyRef, passRef := "", "", "", ""
 	var keyData []byte
-	if s.authKind == authVault {
+	if s.authKind == authOP {
+		keyMode = sshrapp.KeyOnePassword
+		keyRef = strings.TrimSpace(s.keyRefEd.Text())
+		if keyRef == "" {
+			s.form.err = s.t("err.opRef_required")
+			return
+		}
+	} else if s.authKind == authVault {
 		keyMode = sshrapp.KeyVault
 		if t := strings.TrimSpace(s.keyPasteEd.Text()); t != "" {
 			keyData = []byte(t)
@@ -376,6 +399,14 @@ func (s *state) saveHost() {
 		}
 	} else if s.passMode == sshrapp.PasswordAsk {
 		passMode = sshrapp.PasswordAsk
+	} else if s.passMode == sshrapp.PasswordOnePassword {
+		passMode = sshrapp.PasswordOnePassword
+		passRef = strings.TrimSpace(s.passRefEd.Text())
+		password = s.passEd.Text()
+		if passRef == "" && password == "" {
+			s.form.err = s.t("err.opPassword_required")
+			return
+		}
 	} else {
 		passMode = sshrapp.PasswordSaved
 		// kept as typed, spaces at the ends can be part of a password
@@ -400,6 +431,8 @@ func (s *state) saveHost() {
 		KeyMode:       keyMode,
 		KeyData:       keyData,
 		KeyPassphrase: passphrase,
+		KeyRef:        keyRef,
+		PasswordRef:   passRef,
 		PasswordMode:  passMode,
 		Password:      password,
 		Jump:          s.jumpEd.Text(),

@@ -161,7 +161,7 @@ func (s *Store) ProxyHop(chain, targetHost, targetPort string) (*Host, []string,
 		if hopCopy.PasswordMode == PasswordAsk {
 			return nil, nil, fmt.Errorf("jump host %s asks for its password every time, there is no terminal to ask in", hopCopy.Name)
 		}
-		if hopCopy.PasswordMode != PasswordSaved {
+		if !hopCopy.PasswordFromSshr() {
 			args = append(args, "-o", "BatchMode=yes")
 		}
 	}

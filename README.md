@@ -151,6 +151,24 @@ sshr add web -u deploy --key-stdin < key   # asks for the passphrase on the term
 - the public half is kept next to the host file (`~/.sshr/vault/hosts/<id>.pub`), the host form and `sshr add` show its fingerprint
 - a jump hop gets your own `SSH_AUTH_SOCK` back
 
+## Passwords and keys in 1Password
+
+A host can keep its password or key in 1Password instead of this machine, sshr reads it with the [1Password CLI](https://developer.1password.com/docs/cli/get-started/) (`op`) on every connect and keeps only the reference, it is **off by default**, a host uses it only when you choose 1Password for it, because it needs `op` installed and signed in, and each connect waits for `op`, a locked app asks for a fingerprint or the account password
+
+```sh
+sshr add web -u deploy --op-password op://Private/web/password          # use an existing item
+sshr add web -u deploy --no-key --store 1password --op-vault Servers   # type the password, sshr creates a Login item
+sshr add web -u deploy --op-key "op://Private/web key/private key"     # the key of an SSH Key item
+```
+
+- in the host form choose **1Password** for the password (give an `op://` reference or type a password for a new item) or **Key in 1Password** for the key
+- a new item is a Login item titled `sshr <name>` with the tag `sshr`, in the vault from `--op-vault` or `"op_vault"` in `~/.sshr/settings.json`, the account's default vault when neither is set, the password goes to `op item create` as a JSON template on stdin, not in its arguments
+- the password then reaches ssh the same way as a saved one, through the one-time askpass socket, a key is read in OpenSSH format (`?ssh-format=openssh`) and served from the agent of sshr, see [Keys stored in sshr](#keys-stored-in-sshr)
+- the public half of a 1Password key is read once when the host is saved, so the host form can show its fingerprint
+- if `op` is missing or locked, a password host falls back to ssh asking for the password on the terminal, a key host stops with the error from `op`, the app, which has no terminal, shows the error
+- a new password for a host linked to an item is changed in 1Password, not in sshr
+- `op` cannot import an existing private key, add it to 1Password in the app (New Item, SSH Key, Add Private Key, Import a Key File), then link it with `--op-key`
+
 ## Sending images to a server
 
 Pasting a screenshot into a remote session gives the server a path on *your* disk, which it cannot open. Remote Claude Code, an editor or a script just gets a useless string. sshr uploads the image to the host instead and gives you the path on the server.
@@ -194,7 +212,7 @@ In the order we intend to build them (reasons in [docs/WHY.md](docs/WHY.md)):
    - connection reuse with `ControlMaster`/`ControlPersist`, off by default - done ([#22](https://github.com/klovbin/sshr/issues/22)),
    - sending clipboard images to the server — done ([#26](https://github.com/klovbin/sshr/issues/26));
    - mosh, off by default — done ([#23](https://github.com/klovbin/sshr/issues/23)).
-3. Password handling: saved encrypted with a key from the system keychain or asked every time - done ([#6](https://github.com/klovbin/sshr/issues/6)), keys stored inside sshr - done ([#12](https://github.com/klovbin/sshr/issues/12))
+3. Password handling: saved encrypted with a key from the system keychain or asked every time - done ([#6](https://github.com/klovbin/sshr/issues/6)), keys stored inside sshr - done ([#12](https://github.com/klovbin/sshr/issues/12)), passwords and keys in 1Password - done ([#13](https://github.com/klovbin/sshr/issues/13))
 4. Cross-platform installer with OS auto-detection and PATH setup ([#11](https://github.com/klovbin/sshr/issues/11))
 5. Sync with key services: 1Password, Bitwarden, ssh-agent ([#14](https://github.com/klovbin/sshr/issues/14))
 6. REST API ([#12](https://github.com/klovbin/sshr/issues/12)) and MCP server ([#13](https://github.com/klovbin/sshr/issues/13)) for integrations and AI assistants

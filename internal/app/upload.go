@@ -31,7 +31,7 @@ func SSHArgs(h *Host) []string {
 			"-o", "PreferredAuthentications=keyboard-interactive,password",
 			"-o", "PubkeyAuthentication=no",
 		)
-		if h.PasswordMode == PasswordSaved {
+		if h.PasswordFromSshr() {
 			// a saved password is the same every time, retrying it only adds
 			// failures for fail2ban to count
 			args = append(args, "-o", "NumberOfPasswordPrompts=1")
@@ -85,7 +85,7 @@ func (s *Store) UploadImage(h *Host, data []byte, ext string, batch bool) (strin
 		// BatchMode turns askpass off too, a saved password still goes
 		// through it, the askpass helper refuses any other prompt when
 		// there is no terminal
-		if h.PasswordMode != PasswordSaved {
+		if !h.PasswordFromSshr() {
 			args = append(args, "-o", "BatchMode=yes")
 		}
 	}

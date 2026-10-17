@@ -19,6 +19,10 @@ type Settings struct {
 	// password is not asked again while the master is up, and Windows
 	// OpenSSH has no ControlMaster
 	Reuse bool `json:"reuse"`
+	// OPVault is the 1Password vault new items are created in when a host
+	// keeps its password in 1Password, empty means the account's default
+	// vault
+	OPVault string `json:"op_vault,omitempty"`
 }
 
 func settingsPath() (string, error) {

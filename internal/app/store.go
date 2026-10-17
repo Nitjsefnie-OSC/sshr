@@ -76,11 +76,18 @@ type Host struct {
 	KeySealed string `json:"key_sealed,omitempty"`
 	// KeyPub is the public half of the stored key, authorized_keys format
 	KeyPub string `json:"key_pub,omitempty"`
-	// PasswordMode is PasswordSaved, PasswordAsk or empty
+	// KeyRef is the 1Password secret reference of the private key of an
+	// SSH Key item, op://vault/item/private key, for KeyOnePassword
+	KeyRef string `json:"key_ref,omitempty"`
+	// PasswordMode is PasswordSaved, PasswordAsk, PasswordOnePassword or
+	// empty
 	PasswordMode string `json:"password_mode,omitempty"`
 	// Password is the plain password, in memory only, set it to save a new
 	// one, Unlock fills it from PasswordSealed before connecting
 	Password string `json:"-"`
+	// PasswordRef is the 1Password secret reference of the password, for
+	// PasswordOnePassword
+	PasswordRef string `json:"password_ref,omitempty"`
 	// PasswordSealed is the password encrypted with the vault key
 	PasswordSealed string `json:"password_sealed,omitempty"`
 	// PlainPassword is the unencrypted "password" field older versions
@@ -105,6 +112,8 @@ type Store struct {
 	// Reuse overrides the "reuse" setting for this run, nil means the
 	// setting decides
 	Reuse *bool
+	// OPVault overrides the "op_vault" setting for this run
+	OPVault *string
 }
 
 // DefaultStore creates ~/.sshr/vault/hosts if needed.
@@ -168,12 +177,15 @@ func cleanHost(h Host) (Host, error) {
 		h.PasswordMode = PasswordSaved
 	}
 	switch h.PasswordMode {
-	case "", PasswordAsk, PasswordSaved:
+	case "", PasswordAsk, PasswordSaved, PasswordOnePassword:
 	default:
 		return h, fmt.Errorf("unknown password mode %q", h.PasswordMode)
 	}
 	if len(h.KeyData) > 0 {
 		h.KeyMode = KeyVault
+	}
+	if h.KeyMode != KeyOnePassword {
+		h.KeyRef = ""
 	}
 	switch h.KeyMode {
 	case "":
@@ -185,14 +197,40 @@ func cleanHost(h Host) (Host, error) {
 				return h, err
 			}
 		}
+	case KeyOnePassword:
+		h.Key, h.KeyData, h.KeyPassphrase, h.KeySealed = "", nil, "", ""
+		h.KeyRef = strings.TrimSpace(h.KeyRef)
+		if err := checkOPRef(h.KeyRef); err != nil {
+			return h, err
+		}
+		if h.KeyPub == "" {
+			pub, err := opKeyPub(h.KeyRef)
+			if err != nil {
+				return h, err
+			}
+			h.KeyPub = pub
+		}
 	default:
 		return h, fmt.Errorf("unknown key mode %q", h.KeyMode)
 	}
-	if h.Key != "" || h.KeyMode == KeyVault {
+	if h.Key != "" || h.KeyMode != "" {
 		h.PasswordMode = ""
 	}
 	if h.PasswordMode != PasswordSaved {
-		h.Password, h.PasswordSealed, h.PlainPassword = "", "", ""
+		h.PasswordSealed, h.PlainPassword = "", ""
+	}
+	if h.PasswordMode != PasswordSaved && h.PasswordMode != PasswordOnePassword {
+		h.Password = ""
+	}
+	if h.PasswordMode == PasswordOnePassword {
+		h.PasswordRef = strings.TrimSpace(h.PasswordRef)
+		if h.PasswordRef != "" {
+			if err := checkOPRef(h.PasswordRef); err != nil {
+				return h, err
+			}
+		}
+	} else {
+		h.PasswordRef = ""
 	}
 	var err error
 	if h.Jump, err = checkJump(h.Jump, h.Name); err != nil {
@@ -318,6 +356,11 @@ func (s *Store) Update(id string, in Host) (*Host, error) {
 	if h.KeyMode == KeyVault && len(h.KeyData) == 0 && h.KeySealed == "" {
 		h.KeySealed, h.KeyPub = cur.KeySealed, cur.KeyPub
 	}
+	// the 1Password item of the password stays the same unless another one
+	// is given
+	if h.PasswordMode == PasswordOnePassword && h.PasswordRef == "" {
+		h.PasswordRef = cur.PasswordRef
+	}
 	if err := needSecret(&h); err != nil {
 		return nil, err
 	}
@@ -356,6 +399,9 @@ func needSecret(h *Host) error {
 	}
 	if h.KeyMode == KeyVault && len(h.KeyData) == 0 && h.KeySealed == "" {
 		return ErrKeyRequired
+	}
+	if h.PasswordMode == PasswordOnePassword && h.Password == "" && h.PasswordRef == "" {
+		return ErrPasswordRequired
 	}
 	return nil
 }
@@ -400,10 +446,21 @@ func sealPassword(h *Host) error {
 	return nil
 }
 
-// Unlock fills h.Password from the vault before connecting, a host without
-// a saved password is left as it is
+// Unlock fills h.Password from the vault or 1Password before connecting, a
+// host without a saved password is left as it is
 func Unlock(h *Host) error {
-	if h.PasswordMode != PasswordSaved || h.Password != "" {
+	if h.Password != "" {
+		return nil
+	}
+	if h.PasswordMode == PasswordOnePassword {
+		pw, err := opRead(h.PasswordRef)
+		if err != nil {
+			return err
+		}
+		h.Password = string(pw)
+		return nil
+	}
+	if h.PasswordMode != PasswordSaved {
 		return nil
 	}
 	switch {
@@ -431,6 +488,9 @@ func (s *Store) save(h *Host) error {
 	if err := sealKey(h); err != nil {
 		return err
 	}
+	if err := s.opStorePassword(h); err != nil {
+		return err
+	}
 	b, err := json.MarshalIndent(h, "", "  ")
 	if err != nil {
 		return err
@@ -452,4 +512,10 @@ func newID() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b[:]), nil
+}
+
+// PasswordFromSshr tells whether sshr hands the password to ssh, from the
+// vault or from 1Password
+func (h *Host) PasswordFromSshr() bool {
+	return h.Key == "" && (h.PasswordMode == PasswordSaved || h.PasswordMode == PasswordOnePassword)
 }

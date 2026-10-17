@@ -75,7 +75,12 @@ func (s *state) openEditForm(h sshrapp.Host) {
 	// the saved password is not decrypted for the form, it stays in the
 	// vault unless a new one is typed
 	s.passEd.SetText("")
-	if h.KeyMode == sshrapp.KeyVault {
+	s.keyRefEd.SetText(h.KeyRef)
+	s.passRefEd.SetText(h.PasswordRef)
+	if h.KeyMode == sshrapp.KeyOnePassword {
+		s.authKind = authOP
+		s.keyEd.SetText("")
+	} else if h.KeyMode == sshrapp.KeyVault {
 		s.authKind = authVault
 		s.keyEd.SetText("")
 		s.form.vaultKeyPrint = h.KeyFingerprint()
@@ -88,8 +93,8 @@ func (s *state) openEditForm(h sshrapp.Host) {
 	} else {
 		s.authKind = authPassword
 		s.keyEd.SetText("")
-		if h.PasswordMode == sshrapp.PasswordAsk {
-			s.passMode = sshrapp.PasswordAsk
+		if h.PasswordMode == sshrapp.PasswordAsk || h.PasswordMode == sshrapp.PasswordOnePassword {
+			s.passMode = h.PasswordMode
 		}
 		s.form.hasSavedPassword = h.PasswordMode == sshrapp.PasswordSaved
 	}

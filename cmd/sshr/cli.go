@@ -100,6 +100,10 @@ func cmdList(store *app.Store) {
 			keyCol = filepath.Base(h.Key)
 		case h.KeyMode == app.KeyVault:
 			keyCol = "key (sshr)"
+		case h.KeyMode == app.KeyOnePassword:
+			keyCol = "key (1password)"
+		case h.PasswordMode == app.PasswordOnePassword:
+			keyCol = "password (1password)"
 		case h.PasswordMode == app.PasswordSaved:
 			keyCol = "password"
 		case h.PasswordMode == app.PasswordAsk:
@@ -117,6 +121,9 @@ func cmdList(store *app.Store) {
 func cmdAdd(store *app.Store, args []string) {
 	var host, name, user, key, jump, session string
 	noKey, askPassword, keyStdin := false, false, false
+	// 1Password: --op-password / --op-key link existing items,
+	// --store 1password creates an item from the password typed now
+	var opPassword, opKey, store1, opVault string
 	port := 22
 	positional := make([]string, 0)
 
@@ -146,6 +153,18 @@ func cmdAdd(store *app.Store, args []string) {
 			askPassword = true
 		} else if a == "--key-stdin" {
 			keyStdin = true
+		} else if (a == "--op-password" || a == "--op-key" || a == "--store" || a == "--op-vault") && i+1 < len(args) {
+			i++
+			switch a {
+			case "--op-password":
+				opPassword = args[i]
+			case "--op-key":
+				opKey = args[i]
+			case "--store":
+				store1 = args[i]
+			case "--op-vault":
+				opVault = args[i]
+			}
 		} else if (a == "-n" || a == "--name") && i+1 < len(args) {
 			i++
 			name = args[i]
@@ -186,9 +205,27 @@ func cmdAdd(store *app.Store, args []string) {
 		fmt.Fprintln(os.Stderr, "sshr add: --key-stdin cannot be used with -k, --no-key or --ask-password")
 		os.Exit(1)
 	}
-	var password, passwordMode string
+	if store1 != "" && store1 != "1password" && store1 != "sshr" {
+		fmt.Fprintf(os.Stderr, "sshr add: --store takes sshr or 1password, got %q\n", store1)
+		os.Exit(1)
+	}
+	if n := countTrue(key != "", noKey, askPassword, keyStdin, opPassword != "", opKey != ""); n > 1 {
+		fmt.Fprintln(os.Stderr, "sshr add: choose one of -k, --key-stdin, --no-key, --ask-password, --op-password, --op-key")
+		os.Exit(1)
+	}
+	if opVault != "" {
+		st, _ := app.LoadSettings()
+		st.OPVault = opVault
+		// only for this run, the setting on disk is left as it is
+		store.OPVault = &st.OPVault
+	}
+	var password, passwordMode, keyMode, keyRef, passwordRef string
 	var keyData []byte
-	if keyStdin {
+	if opPassword != "" {
+		passwordMode, passwordRef = app.PasswordOnePassword, opPassword
+	} else if opKey != "" {
+		keyMode, keyRef = app.KeyOnePassword, opKey
+	} else if keyStdin {
 		mustKeychain()
 		b, err := io.ReadAll(io.LimitReader(os.Stdin, 64<<10))
 		if err != nil {
@@ -206,12 +243,15 @@ func cmdAdd(store *app.Store, args []string) {
 		key = expanded
 	} else if !noKey {
 		key, password, passwordMode, keyData = promptAuthMethod()
+	} else if store1 == "1password" {
+		password, passwordMode = promptPasswordPlain(bufio.NewScanner(os.Stdin)), app.PasswordOnePassword
 	} else {
 		password, passwordMode = promptPassword(), app.PasswordSaved
 	}
 	in := app.Host{
 		Name: name, Host: host, User: user, Port: port,
-		Key: key, KeyData: keyData, PasswordMode: passwordMode, Password: password,
+		Key: key, KeyData: keyData, KeyMode: keyMode, KeyRef: keyRef,
+		PasswordMode: passwordMode, Password: password, PasswordRef: passwordRef,
 		Jump: jump, Session: session,
 	}
 	h, err := store.Add(in)
@@ -231,6 +271,10 @@ func cmdAdd(store *app.Store, args []string) {
 		msg += fmt.Sprintf(" key=%s", h.Key)
 	} else if h.KeyMode == app.KeyVault {
 		msg += " key stored in sshr (" + h.KeyFingerprint() + ")"
+	} else if h.KeyMode == app.KeyOnePassword {
+		msg += " key in 1Password (" + h.KeyFingerprint() + ")"
+	} else if h.PasswordMode == app.PasswordOnePassword {
+		msg += " auth=password in 1Password (" + h.PasswordRef + ")"
 	} else if h.PasswordMode == app.PasswordSaved {
 		msg += " auth=password (encrypted)"
 	} else if h.PasswordMode == app.PasswordAsk {
@@ -469,6 +513,12 @@ Usage:
                                     --key-stdin stores the private key
                                     read from stdin inside sshr,
                                     encrypted the same way,
+                                    --op-password op://v/item/password and
+                                    --op-key "op://v/item/private key"
+                                    read them from 1Password on every
+                                    connect, --no-key --store 1password
+                                    creates a 1Password item from the
+                                    password (--op-vault <name>),
                                     -J a,b goes through jump hosts: saved
                                     host names or [user@]host[:port],
                                     --session attaches to tmux/zellij
@@ -548,6 +598,16 @@ func promptKeyPaste(scanner *bufio.Scanner) []byte {
 	return nil
 }
 
+func countTrue(bs ...bool) int {
+	n := 0
+	for _, b := range bs {
+		if b {
+			n++
+		}
+	}
+	return n
+}
+
 // mustKeychain stops before a secret is typed when it could not be saved
 func mustKeychain() {
 	if err := app.CheckKeychain(); err != nil {
@@ -561,13 +621,18 @@ func promptPassword() string {
 }
 
 // promptPasswordWith checks the keychain first, a password typed only to be
-// refused at save is wasted, then reads it hidden from a terminal, or as a
-// line from a pipe
+// refused at save is wasted, then reads it
 func promptPasswordWith(scanner *bufio.Scanner) string {
 	if err := app.CheckKeychain(); err != nil {
 		fmt.Fprintf(os.Stderr, "sshr add: %v (--ask-password)\n", err)
 		os.Exit(1)
 	}
+	return promptPasswordPlain(scanner)
+}
+
+// promptPasswordPlain reads a password hidden from a terminal, or as a line
+// from a pipe
+func promptPasswordPlain(scanner *bufio.Scanner) string {
 	fmt.Print("Password: ")
 	var pw string
 	if fd := int(os.Stdin.Fd()); term.IsTerminal(fd) {

@@ -75,7 +75,7 @@ func (s *Store) pubPath(h *Host) string {
 // key files are not offered, agent forwarding is off so the server never
 // reaches the key
 func (s *Store) vaultKeyArgs(h *Host) []string {
-	if h.KeyMode != KeyVault {
+	if !h.agentKey() {
 		return nil
 	}
 	// the host file may come from a copy without its .pub next to it
@@ -94,26 +94,54 @@ func (s *Store) vaultKeyArgs(h *Host) []string {
 // agent of a vault key, a jump hop restores it
 const authSockOrigEnv = "SSHR_AUTH_SOCK_ORIG"
 
-// attachVaultKey opens the sealed key of h and serves it from an agent of
-// this process for as long as ssh runs, the private key is only in memory
-func attachVaultKey(cmd *exec.Cmd, h *Host) (func(), error) {
-	noop := func() {}
-	if h.KeyMode != KeyVault {
-		return noop, nil
-	}
-	if h.KeySealed == "" {
-		return noop, fmt.Errorf("%s has no saved key, save it again", h.Name)
-	}
-	plain, err := unseal(h.KeySealed, h.ID, "key")
-	if errors.Is(err, ErrSealBroken) {
-		return noop, fmt.Errorf("the saved key of %s does not open with the vault key of this machine (keychain reset or the host copied from another machine), save the key again", h.Name)
-	}
-	if err != nil {
-		return noop, err
+// agentKey tells whether the key of h is served by an agent of sshr, a
+// key sealed in sshr or one read from 1Password
+func (h *Host) agentKey() bool {
+	return h.KeyMode == KeyVault || h.KeyMode == KeyOnePassword
+}
+
+// loadKey returns the private key of a host that keeps it in sshr or in
+// 1Password
+func loadKey(h *Host) (any, error) {
+	var plain []byte
+	switch h.KeyMode {
+	case KeyVault:
+		if h.KeySealed == "" {
+			return nil, fmt.Errorf("%s has no saved key, save it again", h.Name)
+		}
+		var err error
+		plain, err = unseal(h.KeySealed, h.ID, "key")
+		if errors.Is(err, ErrSealBroken) {
+			return nil, fmt.Errorf("the saved key of %s does not open with the vault key of this machine (keychain reset or the host copied from another machine), save the key again", h.Name)
+		}
+		if err != nil {
+			return nil, err
+		}
+	case KeyOnePassword:
+		var err error
+		if plain, err = opReadKey(h.KeyRef); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, fmt.Errorf("%s keeps no key in sshr", h.Name)
 	}
 	raw, err := ssh.ParseRawPrivateKey(plain)
 	if err != nil {
-		return noop, fmt.Errorf("the saved key of %s is damaged: %v", h.Name, err)
+		return nil, fmt.Errorf("the saved key of %s is damaged: %v", h.Name, err)
+	}
+	return raw, nil
+}
+
+// attachAgentKey loads the key of h and serves it from an agent of this
+// process for as long as ssh runs, the private key is only in memory
+func attachAgentKey(cmd *exec.Cmd, h *Host) (func(), error) {
+	noop := func() {}
+	if !h.agentKey() {
+		return noop, nil
+	}
+	raw, err := loadKey(h)
+	if err != nil {
+		return noop, err
 	}
 	keys := agent.NewKeyring()
 	if err := keys.Add(agent.AddedKey{PrivateKey: raw, Comment: h.Name}); err != nil {
@@ -158,7 +186,7 @@ func attachVaultKey(cmd *exec.Cmd, h *Host) (func(), error) {
 // it is not secret
 func (s *Store) writePub(h *Host) error {
 	path := s.pubPath(h)
-	if h.KeyMode != KeyVault {
+	if !h.agentKey() {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
 		}

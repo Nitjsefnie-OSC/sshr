@@ -32,8 +32,8 @@ func AttachAuth(cmd *exec.Cmd, h *Host) (func(), error) {
 	if cmd == nil || h == nil {
 		return func() {}, nil
 	}
-	if h.KeyMode == KeyVault {
-		return attachVaultKey(cmd, h)
+	if h.agentKey() {
+		return attachAgentKey(cmd, h)
 	}
 	return attachPassword(cmd, h)
 }
@@ -45,10 +45,19 @@ func AttachAuth(cmd *exec.Cmd, h *Host) (func(), error) {
 // without a saved password get a no-op
 func attachPassword(cmd *exec.Cmd, h *Host) (func(), error) {
 	noop := func() {}
-	if h.Key != "" || h.PasswordMode != PasswordSaved {
+	if h.Key != "" || !h.PasswordFromSshr() {
 		return noop, nil
 	}
 	if err := Unlock(h); err != nil {
+		// 1Password missing or locked, ssh asks on the terminal instead,
+		// with no terminal there is nobody to ask
+		if h.PasswordMode == PasswordOnePassword {
+			if in, _, terr := openTerminal(); terr == nil {
+				in.Close()
+				fmt.Fprintf(os.Stderr, "sshr: %v, type the password\n", err)
+				return noop, nil
+			}
+		}
 		return noop, err
 	}
 	exe, err := os.Executable()
