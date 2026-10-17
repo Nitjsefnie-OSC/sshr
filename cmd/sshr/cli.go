@@ -76,6 +76,8 @@ func runCLI(args []string) {
 		cmdMCP(store, args[1:])
 	case "serve":
 		cmdServe(store, args[1:])
+	case "sync":
+		cmdSync(store, args[1:])
 	case app.ProxyCommandName:
 		cmdProxy(store, args[1:])
 	case "help", "--help", "-h":
@@ -593,6 +595,9 @@ Usage:
                                     port needs the token from
                                     ~/.sshr/api-token, no secrets are
                                     returned, commands are off by default
+  sshr sync [init|invite|join|pending|approve|pull|push|status|
+            remove-device|leave]   sync hosts through an sshr-sync server,
+                                    end to end encrypted, see sshr sync help
   sshr help                         show this help
 
   --reuse / --no-reuse              with any command that connects: share

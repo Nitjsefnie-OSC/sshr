@@ -107,6 +107,9 @@ func loadKey(h *Host) (any, error) {
 	switch h.KeyMode {
 	case KeyVault:
 		if h.KeySealed == "" {
+			if h.KeyPub != "" {
+				return nil, fmt.Errorf("the key of %s (%s) is stored on another device, keys do not sync, paste it here to use it", h.Name, h.KeyFingerprint())
+			}
 			return nil, fmt.Errorf("%s has no saved key, save it again", h.Name)
 		}
 		var err error

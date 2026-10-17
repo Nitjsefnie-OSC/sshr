@@ -385,6 +385,51 @@ func (s *Store) Update(id string, in Host) (*Host, error) {
 	return &h, nil
 }
 
+// Import saves a host that came from another device under its own ID and
+// creation time, a password in it is sealed with this machine's vault key,
+// with no keychain the host is not written rather than written in the
+// clear, a private key stored in sshr never travels, the local one is kept
+func (s *Store) Import(in Host) (*Host, error) {
+	id := strings.TrimSpace(in.ID)
+	if !validID(id) {
+		return nil, fmt.Errorf("bad host id %q", id)
+	}
+	created := in.CreatedAt
+	if in.KeyMode == KeyVault {
+		in.KeyData = nil
+		in.KeySealed = ""
+		if cur, err := s.Find(id); err == nil && cur.ID == id && cur.KeyMode == KeyVault && cur.KeyPub == in.KeyPub {
+			in.KeySealed = cur.KeySealed
+		}
+	}
+	in.PlainPassword, in.PasswordSealed = "", ""
+	h, err := cleanHost(in)
+	if err != nil {
+		return nil, err
+	}
+	if h.PasswordMode == PasswordSaved && h.Password == "" {
+		return nil, fmt.Errorf("host %s came without its password", h.Name)
+	}
+	h.ID, h.CreatedAt = id, created
+	if err := s.save(&h); err != nil {
+		return nil, err
+	}
+	return &h, nil
+}
+
+// validID accepts the IDs newID makes, the ID becomes a file name
+func validID(id string) bool {
+	if len(id) != 32 {
+		return false
+	}
+	for _, c := range id {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 // checkJump normalizes a jump spec and refuses one that names the host
 // itself, which would loop
 func checkJump(jump, name string) (string, error) {
@@ -411,7 +456,9 @@ func needSecret(h *Host) error {
 	if h.PasswordMode == PasswordSaved && h.Password == "" && h.PasswordSealed == "" && h.PlainPassword == "" {
 		return ErrPasswordRequired
 	}
-	if h.KeyMode == KeyVault && len(h.KeyData) == 0 && h.KeySealed == "" {
+	// a host synced from a device that keeps its key has KeyPub and no
+	// sealed key here, it can still be edited
+	if h.KeyMode == KeyVault && len(h.KeyData) == 0 && h.KeySealed == "" && h.KeyPub == "" {
 		return ErrKeyRequired
 	}
 	if h.PasswordMode == PasswordOnePassword && h.Password == "" && h.PasswordRef == "" {

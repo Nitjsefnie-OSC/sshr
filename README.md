@@ -256,6 +256,37 @@ Security:
 - a request with an `Origin` header (a web page) or a `Host` that is not a loopback name (DNS rebinding) is refused
 - passwords, private keys and 1Password references are never returned, and are not taken either, a saved password or a pasted key is added in the app or with `sshr add`
 
+## Sync between devices
+
+Hosts sync through an `sshr-sync` server (see [Sync server](#sync-server)), end to end encrypted, the server gets only ciphertext
+
+```sh
+sshr sync init --server https://sync.example.com --name laptop   # first device
+sshr sync join --server https://sync.example.com <code>          # on the new device, prints its fingerprint
+sshr sync approve <id>                                           # on a device already in, after comparing fingerprints
+sshr sync                                                        # pull, then push what changed here
+sshr sync status                                                 # devices and a state fingerprint
+sshr sync remove-device <id>                                     # the vault key changes
+```
+
+How it is protected:
+
+- every device has its own keys from a 32-byte seed in the system keychain, an Ed25519 signing key and an ML-KEM-768 + X25519 (X-Wing) key, there is no master password to guess
+- a random vault key encrypts every host (XChaCha20-Poly1305, the account, host ID and key epoch as associated data, padded to 512 bytes), the vault key reaches each device in its own HPKE envelope (Go's crypto/hpke)
+- the manifest lists the hosts, the hash of each blob and the trusted devices, it is MAC'd with the vault key, signed by the device that pushed it and carries the hash of the previous manifest, a device accepts only a chain that continues the one it saw, signed by a device it already trusts
+- a new device is trusted only after you compare its fingerprint on both screens, the invite code carries the fingerprint of the inviting device, so the server can neither add its own device nor pretend to be the inviting one
+- saved passwords travel inside the encryption and are sealed again with the keychain key of the receiving machine, private keys stored in sshr never leave their device, other devices see the host with its key fingerprint and are asked to paste the key there
+- removing a device changes the vault key, encrypts every host again and revokes its token
+
+Limits:
+
+- a device that is new or lost its state accepts whatever the server shows as the current state, a device that synced before refuses an older one (`--accept-reset` after a real server restore)
+- a server could show two devices different histories, they keep syncing apart, compare the state fingerprint in `sshr sync status` on two screens, equal means the same history
+- the server sees how many hosts there are (sizes are padded), when devices push, their addresses and device names, and it can hold back changes
+- two devices changing the same host before syncing keep the later change, the other is replaced and `sshr sync` says so
+- a removed device keeps what it already downloaded
+- key file paths sync but the files do not, jump hosts refer to names, sync needs the system keychain, it runs when you call `sshr sync`, there is no automatic sync yet
+
 ## Sync server
 
 `sshr-sync` is the server devices sync through, a separate binary, it stores only device public keys, encrypted blobs and signed manifests, it cannot read hosts or passwords, it can only lose data or refuse service
@@ -319,7 +350,7 @@ In the order we intend to build them (reasons in [docs/WHY.md](docs/WHY.md)):
 4. Installer with OS detection and PATH setup, `install.sh` for Linux and macOS - done ([#2](https://github.com/klovbin/sshr/issues/2)), then packages for AUR, Homebrew, Scoop and nixpkgs ([#17](https://github.com/klovbin/sshr/issues/17))
 5. Sync with key services: 1Password, Bitwarden, ssh-agent - done ([#5](https://github.com/klovbin/sshr/issues/5), [#13](https://github.com/klovbin/sshr/issues/13))
 6. MCP server for AI assistants - done ([#4](https://github.com/klovbin/sshr/issues/4)), REST API for integrations - done ([#3](https://github.com/klovbin/sshr/issues/3))
-7. Sync across machines through our own sync server, end to end encrypted, the server stores only ciphertext ([#1](https://github.com/klovbin/sshr/issues/1))
+7. Sync across machines through our own sync server, end to end encrypted, the server stores only ciphertext - done ([#1](https://github.com/klovbin/sshr/issues/1)), automatic sync, recovery key and QR pairing later
 
 Not planned: Eternal Terminal (another server daemon for what tmux and mosh already cover) and autossh (meant for permanent tunnels, not interactive work).
 

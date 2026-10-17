@@ -218,3 +218,41 @@ func CheckKeychain() error {
 // LockFile holds an exclusive lock on path until the returned func runs,
 // the sync server keeps one instance per data directory with it
 func LockFile(path string) (func(), error) { return lockFile(path) }
+
+// SecretGet reads a value sshr keeps in the system keychain, ok is false
+// when there is none
+func SecretGet(name string) (value []byte, ok bool, err error) {
+	v, err := keyringCall(func() (string, error) { return keyring.Get(keyringService, name) })
+	if errors.Is(err, keyring.ErrNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, &KeychainError{err}
+	}
+	b, err := base64.StdEncoding.DecodeString(v)
+	if err != nil {
+		return nil, false, &KeychainError{fmt.Errorf("the keychain entry %s is damaged", name)}
+	}
+	return b, true, nil
+}
+
+// SecretSet stores a value in the system keychain
+func SecretSet(name string, value []byte) error {
+	enc := base64.StdEncoding.EncodeToString(value)
+	if _, err := keyringCall(func() (string, error) {
+		return "", keyring.Set(keyringService, name, enc)
+	}); err != nil {
+		return &KeychainError{err}
+	}
+	return nil
+}
+
+// SecretDelete removes a value from the system keychain, a missing one is
+// not an error
+func SecretDelete(name string) error {
+	_, err := keyringCall(func() (string, error) { return "", keyring.Delete(keyringService, name) })
+	if err != nil && !errors.Is(err, keyring.ErrNotFound) {
+		return &KeychainError{err}
+	}
+	return nil
+}

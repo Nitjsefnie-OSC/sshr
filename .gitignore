@@ -20,3 +20,4 @@ coverage.*
 # Local data (vault lives in ~/.sshr)
 .env
 *.pem
+/sshr-sync
