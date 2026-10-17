@@ -399,10 +399,15 @@ func (s *Store) Import(in Host) (*Host, error) {
 		return nil, fmt.Errorf("bad host id %q", id)
 	}
 	created := in.CreatedAt
+	var cur *Host
+	if h, err := s.Find(id); err == nil && h.ID == id {
+		cur = h
+	}
+	in, _ = FromOtherDevice(in, cur)
 	if in.KeyMode == KeyVault {
 		in.KeyData = nil
 		in.KeySealed = ""
-		if cur, err := s.Find(id); err == nil && cur.ID == id && cur.KeyMode == KeyVault && cur.KeyPub == in.KeyPub {
+		if cur != nil && cur.KeyMode == KeyVault && cur.KeyPub == in.KeyPub {
 			in.KeySealed = cur.KeySealed
 		}
 	}
@@ -419,6 +424,38 @@ func (s *Store) Import(in Host) (*Host, error) {
 		return nil, err
 	}
 	return &h, nil
+}
+
+// FromOtherDevice drops what a host from another device must not decide
+// on this machine, references to secrets here (1Password items) would make
+// this machine read them and hand them to the host's server, local is the
+// same host as saved here or nil, its references are kept, without one
+// the password is asked and the key falls back to the default ssh keys,
+// notes say what the user has to set again here, hooks and importers add
+// their fields to this list
+func FromOtherDevice(in Host, local *Host) (Host, []string) {
+	var notes []string
+	if in.PasswordMode == PasswordOnePassword {
+		if local != nil && local.PasswordMode == PasswordOnePassword && local.PasswordRef != "" {
+			in.PasswordRef = local.PasswordRef
+		} else {
+			in.PasswordMode, in.PasswordRef = PasswordAsk, ""
+			notes = append(notes, "the password is in 1Password on the other device, set its reference here, until then it is asked")
+		}
+	} else {
+		in.PasswordRef = ""
+	}
+	if in.KeyMode == KeyOnePassword {
+		if local != nil && local.KeyMode == KeyOnePassword && local.KeyRef != "" {
+			in.KeyRef, in.KeyPub = local.KeyRef, local.KeyPub
+		} else {
+			in.KeyMode, in.KeyRef, in.KeyPub = "", "", ""
+			notes = append(notes, "the key is in 1Password on the other device, set its reference here, until then ssh uses its default keys")
+		}
+	} else {
+		in.KeyRef = ""
+	}
+	return in, notes
 }
 
 // Duplicate saves a copy of host id under a new ID and name, its saved

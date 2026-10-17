@@ -308,3 +308,54 @@ func mustPending(t *testing.T, c *Client) string {
 	}
 	return p[0].ID
 }
+
+// a 1Password reference never comes from another device, a forged one
+// would make this machine read the item and hand it to that host
+func TestSyncOnePasswordRefsStayLocal(t *testing.T) {
+	w := newWorld(t)
+	w.pair()
+	h, err := w.a.Store.Add(app.Host{Name: "op", Host: "10.0.0.9", User: "u", PasswordMode: app.PasswordOnePassword, PasswordRef: "op://Private/Bank/password"})
+	must(t, err)
+	must(t, w.a.Push())
+	must(t, w.b.Pull())
+	got, err := w.b.Store.Find(h.ID)
+	must(t, err)
+	if got.PasswordMode != app.PasswordAsk || got.PasswordRef != "" {
+		t.Fatalf("b took the reference: mode %q ref %q", got.PasswordMode, got.PasswordRef)
+	}
+	if !strings.Contains(w.log.String(), "set its reference here") {
+		t.Errorf("no note in the log:\n%s", w.log.String())
+	}
+
+	// b links its own item, a later edit from a keeps it
+	in := *got
+	in.PasswordMode, in.PasswordRef = app.PasswordOnePassword, "op://Mine/server/password"
+	_, err = w.b.Store.Update(h.ID, in)
+	must(t, err)
+	must(t, w.b.Push())
+	must(t, w.a.Pull())
+	if ah, _ := w.a.Store.Find(h.ID); ah.PasswordRef != "op://Private/Bank/password" {
+		t.Fatalf("b's reference reached a: %q", ah.PasswordRef)
+	}
+	ah, _ := w.a.Store.Find(h.ID)
+	ain := *ah
+	ain.Port = 2200
+	_, err = w.a.Store.Update(h.ID, ain)
+	must(t, err)
+	must(t, w.a.Push())
+	must(t, w.b.Pull())
+	got, _ = w.b.Store.Find(h.ID)
+	if got.Port != 2200 || got.PasswordRef != "op://Mine/server/password" {
+		t.Fatalf("b after a's edit: port %d ref %q", got.Port, got.PasswordRef)
+	}
+
+	// a forged payload with a reference, as an old or hostile client sends it
+	forged := app.Host{ID: "f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0", Name: "evil", Host: "attacker.example", User: "u",
+		PasswordMode: app.PasswordOnePassword, PasswordRef: "op://Private/Bank/password",
+		KeyMode: app.KeyOnePassword, KeyRef: "op://Private/key/private key", KeyPub: "ssh-ed25519 AAAA"}
+	ev, err := w.b.Store.Import(forged)
+	must(t, err)
+	if ev.PasswordRef != "" || ev.KeyRef != "" || ev.KeyMode != "" {
+		t.Fatalf("forged references kept: %+v", ev)
+	}
+}

@@ -335,6 +335,7 @@ How it is protected:
 - a new device is trusted only after you compare its fingerprint on both screens, the invite code carries the fingerprint of the inviting device, so the server can neither add its own device nor pretend to be the inviting one
 - saved passwords travel inside the encryption and are sealed again with the keychain key of the receiving machine, private keys stored in sshr never leave their device, other devices see the host with its key fingerprint and are asked to paste the key there
 - removing a device changes the vault key, encrypts every host again and revokes its token
+- 1Password references (`op://...` of a password or a key) stay on the device where they were set and are not sent, a host from another device keeps the reference this machine set for it, without one its password is asked and ssh uses its default keys, `sshr sync` says which hosts need the reference set here, otherwise one stolen device could push a host whose reference points at another item and every device would read that item from its own 1Password and hand it to that host's server
 
 Limits:
 

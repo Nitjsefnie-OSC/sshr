@@ -21,7 +21,7 @@ Moving hosts in and out
 
 - import from `~/.ssh/config` through `ssh -G`
 - export to `~/.ssh/config` with an `Include` line, kept up to date, off by default
-- sync between devices through our own server `sshr-sync`, end to end encrypted, conflicts keep both sides ([#1](https://github.com/klovbin/sshr/issues/1))
+- sync between devices through our own server `sshr-sync`, end to end encrypted, conflicts keep both sides ([#1](https://github.com/klovbin/sshr/issues/1)), 1Password references stay on the device where they were set ([#30](https://github.com/klovbin/sshr/issues/30))
 
 For other programs
 
@@ -34,7 +34,7 @@ Installing
 - the logo as the app icon: `.exe` resources on Windows, a menu entry on Linux, `~/Applications/sshr.app` on macOS, `sshr desktop-entry`
 - CI on Linux, macOS and Windows: tests, CLI run, GUI build, the macOS bundle checked
 
-Fixed bugs: [#14](https://github.com/klovbin/sshr/issues/14), [#15](https://github.com/klovbin/sshr/issues/15), [#16](https://github.com/klovbin/sshr/issues/16), [#18](https://github.com/klovbin/sshr/issues/18), [#19](https://github.com/klovbin/sshr/issues/19), [#21](https://github.com/klovbin/sshr/issues/21), [#22](https://github.com/klovbin/sshr/issues/22), [#23](https://github.com/klovbin/sshr/issues/23), [#24](https://github.com/klovbin/sshr/issues/24)
+Fixed bugs: [#14](https://github.com/klovbin/sshr/issues/14), [#15](https://github.com/klovbin/sshr/issues/15), [#16](https://github.com/klovbin/sshr/issues/16), [#18](https://github.com/klovbin/sshr/issues/18), [#19](https://github.com/klovbin/sshr/issues/19), [#21](https://github.com/klovbin/sshr/issues/21), [#22](https://github.com/klovbin/sshr/issues/22), [#23](https://github.com/klovbin/sshr/issues/23), [#24](https://github.com/klovbin/sshr/issues/24), [#30](https://github.com/klovbin/sshr/issues/30)
 
 ## Next
 
@@ -44,26 +44,22 @@ Needed before a release
 2. Choose a license, packages cannot ship without one ([#27](https://github.com/klovbin/sshr/issues/27))
 3. Packages for AUR, Homebrew, Scoop and nixpkgs, release binaries with `sha256sums.txt` for `install.sh` ([#17](https://github.com/klovbin/sshr/issues/17))
 
-Safety first
-
-4. Keep fields that run commands (ProxyCommand, hooks, LocalCommand) out of sync and import ([#30](https://github.com/klovbin/sshr/issues/30)), before hooks and importers land
-
 Features
 
-5. Bitwarden for passwords and keys, like 1Password ([#20](https://github.com/klovbin/sshr/issues/20))
-6. Tags and search ([#31](https://github.com/klovbin/sshr/issues/31))
-7. Copy files to and from a host, `sshr send` and `sshr get` ([#32](https://github.com/klovbin/sshr/issues/32))
-8. Run a command on many hosts by tag ([#33](https://github.com/klovbin/sshr/issues/33))
-9. Fall back to a gateway when the direct connection fails ([#28](https://github.com/klovbin/sshr/issues/28))
-10. Local commands before and after connect, needs #30 ([#29](https://github.com/klovbin/sshr/issues/29))
-11. Import from PuTTY, MobaXterm, Remmina, Termius, Royal TS, needs #30 ([#34](https://github.com/klovbin/sshr/issues/34))
+4. Bitwarden for passwords and keys, like 1Password ([#20](https://github.com/klovbin/sshr/issues/20))
+5. Tags and search ([#31](https://github.com/klovbin/sshr/issues/31))
+6. Copy files to and from a host, `sshr send` and `sshr get` ([#32](https://github.com/klovbin/sshr/issues/32))
+7. Run a command on many hosts by tag ([#33](https://github.com/klovbin/sshr/issues/33))
+8. Fall back to a gateway when the direct connection fails ([#28](https://github.com/klovbin/sshr/issues/28))
+9. Local commands before and after connect, their fields go on the #30 list ([#29](https://github.com/klovbin/sshr/issues/29))
+10. Import from PuTTY, MobaXterm, Remmina, Termius, Royal TS, through the #30 list ([#34](https://github.com/klovbin/sshr/issues/34))
 
 Later
 
-12. sshr on iOS and Android, ssh in process, keys in the phone's keystore, joins sync like any device ([#25](https://github.com/klovbin/sshr/issues/25))
-13. Sync: automatic background sync, a paper recovery key, pairing by QR code
-14. Sync without a server: device to device over the local network or the user's own WireGuard tunnel, TLS 1.3 with device keys pinned at pairing
-15. Optional hardware keys (YubiKey, FIDO2 `ed25519-sk`), not required
+11. sshr on iOS and Android, ssh in process, keys in the phone's keystore, joins sync like any device ([#25](https://github.com/klovbin/sshr/issues/25))
+12. Sync: automatic background sync, a paper recovery key, pairing by QR code
+13. Sync without a server: device to device over the local network or the user's own WireGuard tunnel, TLS 1.3 with device keys pinned at pairing
+14. Optional hardware keys (YubiKey, FIDO2 `ed25519-sk`), not required
 
 ## Not planned
 

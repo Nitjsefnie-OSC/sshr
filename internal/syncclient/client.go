@@ -458,6 +458,9 @@ func payloadOf(h app.Host) ([]byte, error) {
 		p.Password = h.Password
 	}
 	p.Host.PasswordSealed, p.Host.PlainPassword, p.Host.KeySealed = "", "", ""
+	// references to secrets of this machine stay here, the other devices
+	// do not take them anyway (app.FromOtherDevice)
+	p.Host.PasswordRef, p.Host.KeyRef = "", ""
 	return json.Marshal(p)
 }
 
@@ -672,11 +675,16 @@ func (c *Client) apply(m *syncproto.Manifest) error {
 					p.Host.Password = p.Password
 					p.Host.ID = ""
 					p.Host.Name = conflictName(p.Host.Name, e.Device)
+					var notes []string
+					p.Host, notes = app.FromOtherDevice(p.Host, nil)
 					cp, err := c.Store.Add(p.Host)
 					if err != nil {
 						return fmt.Errorf("keeping the other version of %s: %v", p.Host.Name, err)
 					}
 					c.logf("conflict on %s: kept the change made here, the one from device %s is saved as %q", id[:8], e.Device[:8], cp.Name)
+					for _, n := range notes {
+						c.logf("%s: %s", cp.Name, n)
+					}
 				}
 				continue
 			}
@@ -706,9 +714,17 @@ func (c *Client) apply(m *syncproto.Manifest) error {
 			return err
 		}
 		p.Host.Password = p.Password
+		var cur *app.Host
+		if h, err := c.Store.Find(id); err == nil && h.ID == id {
+			cur = h
+		}
+		_, notes := app.FromOtherDevice(p.Host, cur)
 		h, err := c.Store.Import(p.Host)
 		if err != nil {
 			return fmt.Errorf("host %s: %v", p.Host.Name, err)
+		}
+		for _, n := range notes {
+			c.logf("%s: %s", h.Name, n)
 		}
 		written, err := payloadOf(*h)
 		if err != nil {
