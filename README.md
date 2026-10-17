@@ -273,7 +273,7 @@ In the order we intend to build them (reasons in [docs/WHY.md](docs/WHY.md)):
 4. Installer with OS detection and PATH setup, `install.sh` for Linux and macOS - done ([#2](https://github.com/klovbin/sshr/issues/2)), then packages for AUR, Homebrew, Scoop and nixpkgs ([#17](https://github.com/klovbin/sshr/issues/17))
 5. Sync with key services: 1Password, Bitwarden, ssh-agent - done ([#5](https://github.com/klovbin/sshr/issues/5), [#13](https://github.com/klovbin/sshr/issues/13))
 6. MCP server for AI assistants - done ([#4](https://github.com/klovbin/sshr/issues/4)), REST API for integrations ([#3](https://github.com/klovbin/sshr/issues/3))
-7. GitHub / git vault sync across machines (see the zero-knowledge idea below)
+7. Sync across machines through our own sync server, end to end encrypted, the server stores only ciphertext ([#1](https://github.com/klovbin/sshr/issues/1))
 
 Not planned: Eternal Terminal (another server daemon for what tmux and mosh already cover) and autossh (meant for permanent tunnels, not interactive work).
 
