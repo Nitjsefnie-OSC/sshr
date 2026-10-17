@@ -66,13 +66,23 @@ func TestExportSSHConfig(t *testing.T) {
 	}
 
 	// ssh itself reads the result the same way
-	if _, err := exec.LookPath("ssh"); err == nil {
+	if sshPath, err := exec.LookPath("ssh"); err == nil {
 		g, err := sshG("web-prod", cfg)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if g["hostname"][0] != "10.0.0.2" || g["port"][0] != "2222" || g["proxyjump"][0] != "bastion,edge.example.com" {
-			t.Fatalf("ssh -G web-prod = %v", g)
+			// what ssh made of the Include line
+			ver, _ := exec.Command(sshPath, "-V").CombinedOutput()
+			dbg, _ := exec.Command(sshPath, "-vvv", "-G", "-F", cfg, "web-prod").CombinedOutput()
+			var lines []string
+			for _, l := range strings.Split(string(dbg), "\n") {
+				if strings.Contains(strings.ToLower(l), "include") || strings.Contains(l, "Reading configuration") {
+					lines = append(lines, l)
+				}
+			}
+			t.Fatalf("ssh %s (%s) got hostname %v port %v for web-prod\ninclude line: %s\n%s",
+				sshPath, strings.TrimSpace(string(ver)), g["hostname"], g["port"], s.includeLine(), strings.Join(lines, "\n"))
 		}
 	}
 
