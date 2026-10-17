@@ -83,10 +83,10 @@ In the app: **Settings → Import → Export to ~/.ssh/config**, off by default,
 
 [mosh](https://mosh.org) keeps a session alive when your network changes or your laptop sleeps, and shows what you type immediately even on a slow link. It is **off by default**, because it has real costs:
 
-- needs `mosh` on your computer, and `mosh-server` plus open UDP ports 60000–61000 on the server;
-- no port forwarding and no agent forwarding;
-- no scrollback unless you run tmux/screen on the server;
-- terminal image protocols (kitty, sixel) do not pass through;
+- needs `mosh` on your computer, and `mosh-server` plus open UDP ports 60000-61000 on the server
+- no port forwarding and no agent forwarding
+- no scrollback unless you run tmux/screen on the server
+- terminal image protocols (kitty, sixel) do not pass through
 - no native Windows client.
 
 Turn it on in **Settings → Connection → Connect with mosh** (stored as `"mosh": true` in `~/.sshr/settings.json`), or per call:
@@ -375,9 +375,9 @@ In the app, every host has a **Send image** button. The remote path goes straigh
 
 How it works:
 
-- a separate `ssh` with the host's saved key and port writes the file to `~/.cache/sshr/pasted/` on the server and prints its path;
-- the file is removed after 15 minutes by a detached `sleep`, and every upload also deletes older leftovers, in case that `sleep` was killed by a logout;
-- the server needs only `sh`; the command runs under `sh -c`, so a fish or zsh login shell is fine;
+- a separate `ssh` with the host's saved key and port writes the file to `~/.cache/sshr/pasted/` on the server and prints its path
+- the file is removed after 15 minutes by a detached `sleep`, and every upload also deletes older leftovers, in case that `sleep` was killed by a logout
+- the server needs only `sh`, the command runs under `sh -c`, so a fish or zsh login shell is fine
 - the CLI can ask for a password on the terminal, the app has no terminal, so it uses `BatchMode` and works with a key, ssh-agent or a saved password, a host in ask mode tells you to use `sshr paste`
 - `-c` is opt-in because it replaces the image in your clipboard with the path.
 
