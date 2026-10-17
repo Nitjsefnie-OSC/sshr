@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/pem"
 	"errors"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -117,7 +116,7 @@ func TestVaultKeyAgent(t *testing.T) {
 			sock = v
 		}
 	}
-	c, err := net.Dial("unix", sock)
+	c, err := dialAgent(sock)
 	if err != nil {
 		t.Fatal(err)
 	}

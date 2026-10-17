@@ -30,7 +30,8 @@ func TestExportSSHConfig(t *testing.T) {
 	add(Host{Name: "bastion", Host: "10.0.0.1", User: "jump", Key: key})
 	add(Host{Name: "web prod", Host: "10.0.0.2", User: "deploy", Port: 2222, Jump: "bastion,edge.example.com", PasswordMode: PasswordAsk})
 	add(Host{Name: "taken", Host: "10.0.0.3", User: "u", PasswordMode: PasswordAsk})
-	add(Host{Name: "agent", Host: "10.0.0.4", User: "u", KeyMode: KeyAgent, Agent: "/run/a%b.sock", PasswordMode: PasswordAsk})
+	sock := filepath.Join(dir, "a%b.sock")
+	add(Host{Name: "agent", Host: "10.0.0.4", User: "u", KeyMode: KeyAgent, Agent: sock, PasswordMode: PasswordAsk})
 
 	if s.SSHConfigExported() {
 		t.Fatal("export reported before install")
@@ -50,7 +51,7 @@ func TestExportSSHConfig(t *testing.T) {
 	for _, want := range []string{
 		"Host bastion\n  HostName 10.0.0.1\n  User jump\n  IdentityFile \"" + key + "\"\n  IdentitiesOnly yes\n",
 		"Host web-prod\n  HostName 10.0.0.2\n  User deploy\n  Port 2222\n  ProxyJump bastion,edge.example.com\n",
-		"IdentityAgent \"/run/a%%b.sock\"",
+		"IdentityAgent \"" + strings.ReplaceAll(sock, "%", "%%") + "\"",
 	} {
 		if !strings.Contains(string(out), want) {
 			t.Fatalf("export lacks %q:\n%s", want, out)
@@ -79,7 +80,7 @@ func TestExportSSHConfig(t *testing.T) {
 	h, _ := s.Find("taken")
 	s.Delete(h.ID)
 	h, _ = s.Find("agent")
-	s.Update(h.ID, Host{Name: "agent2", Host: "10.0.0.4", User: "u", KeyMode: KeyAgent, Agent: "/run/a%b.sock", PasswordMode: PasswordAsk})
+	s.Update(h.ID, Host{Name: "agent2", Host: "10.0.0.4", User: "u", KeyMode: KeyAgent, Agent: sock, PasswordMode: PasswordAsk})
 	out, _ = os.ReadFile(s.SSHConfigOut)
 	if !strings.Contains(string(out), "Host agent2\n") || strings.Contains(string(out), "Host agent\n") {
 		t.Fatalf("export not rewritten on update:\n%s", out)
