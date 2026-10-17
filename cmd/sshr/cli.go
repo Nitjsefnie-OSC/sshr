@@ -74,6 +74,8 @@ func runCLI(args []string) {
 		fmt.Printf("Closed the shared connection to %s\n", h.Name)
 	case "mcp":
 		cmdMCP(store, args[1:])
+	case "serve":
+		cmdServe(store, args[1:])
 	case app.ProxyCommandName:
 		cmdProxy(store, args[1:])
 	case "help", "--help", "-h":
@@ -585,6 +587,12 @@ Usage:
                                     run commands only with
                                     --allow-commands or the mcp_commands
                                     setting (off by default)
+  sshr serve [--listen unix:<path>|127.0.0.1:<port>] [--allow-commands]
+                                    local REST API for other programs,
+                                    a unix socket by default, a loopback
+                                    port needs the token from
+                                    ~/.sshr/api-token, no secrets are
+                                    returned, commands are off by default
   sshr help                         show this help
 
   --reuse / --no-reuse              with any command that connects: share

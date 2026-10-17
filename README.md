@@ -226,6 +226,36 @@ What it never does:
 - it listens on nothing, the assistant runs `sshr mcp` as its own child process and talks over stdin and stdout, so no port and no token
 - every command is logged to stderr, which the assistant shows in its MCP logs
 
+## REST API
+
+`sshr serve` is a local HTTP API for other programs, editor plugins, panels, scripts, it runs until Ctrl+C
+
+```sh
+sshr serve                                  # unix socket $XDG_RUNTIME_DIR/sshr/api.sock (or ~/.sshr/cm/api.sock)
+sshr serve --listen 127.0.0.1:7522          # a loopback port, needs the token
+curl --unix-socket "$XDG_RUNTIME_DIR/sshr/api.sock" http://x/v1/hosts
+curl -H "Authorization: Bearer $(cat ~/.sshr/api-token)" http://127.0.0.1:7522/v1/hosts
+```
+
+| Method and path | What it does |
+|----|----|
+| `GET /v1/hosts` | list hosts, the same fields as the MCP `list_hosts` |
+| `GET /v1/hosts/{host}` | one host by name, address or ID |
+| `POST /v1/hosts` | add a host: `name`, `host`, `user`, `port`, `key`, `agent`, `agent_key`, `ask_password`, `op_password`, `op_key`, `jump`, `session`, `forwards` |
+| `DELETE /v1/hosts/{host}` | remove a host |
+| `GET /v1/hosts/{host}/connect` | the command line that opens a session, `{"argv": [...]}`, run it in your terminal |
+| `POST /v1/hosts/{host}/upload?ext=png` | body is the file, returns its path on the server, removed after 15 minutes |
+| `POST /v1/hosts/{host}/run` | `{"command": "...", "timeout_seconds": 60}`, **off by default** (`--allow-commands` or `"api_commands": true`) |
+| `POST /v1/hosts/{host}/tunnels` | `{"forwards": ["db"]}` opens saved forwards with `ssh -N` (all when empty), they live as long as the server |
+| `GET /v1/tunnels`, `DELETE /v1/tunnels/{id}` | list and close tunnels |
+
+Security:
+
+- it never listens on the network, `--listen` takes only `127.0.0.1`, `::1` or `localhost`, the default unix socket is 0600 in a 0700 directory
+- on a port any local program could connect, so a token is required, 64 hex characters in `~/.sshr/api-token` (0600), created on the first start
+- a request with an `Origin` header (a web page) or a `Host` that is not a loopback name (DNS rebinding) is refused
+- passwords, private keys and 1Password references are never returned, and are not taken either, a saved password or a pasted key is added in the app or with `sshr add`
+
 ## Sending images to a server
 
 Pasting a screenshot into a remote session gives the server a path on *your* disk, which it cannot open. Remote Claude Code, an editor or a script just gets a useless string. sshr uploads the image to the host instead and gives you the path on the server.
@@ -272,7 +302,7 @@ In the order we intend to build them (reasons in [docs/WHY.md](docs/WHY.md)):
 3. Password handling: saved encrypted with a key from the system keychain or asked every time - done ([#6](https://github.com/klovbin/sshr/issues/6)), keys stored inside sshr - done ([#12](https://github.com/klovbin/sshr/issues/12)), passwords and keys in 1Password - done ([#13](https://github.com/klovbin/sshr/issues/13)), keys from ssh agents including 1Password - done ([#5](https://github.com/klovbin/sshr/issues/5))
 4. Installer with OS detection and PATH setup, `install.sh` for Linux and macOS - done ([#2](https://github.com/klovbin/sshr/issues/2)), then packages for AUR, Homebrew, Scoop and nixpkgs ([#17](https://github.com/klovbin/sshr/issues/17))
 5. Sync with key services: 1Password, Bitwarden, ssh-agent - done ([#5](https://github.com/klovbin/sshr/issues/5), [#13](https://github.com/klovbin/sshr/issues/13))
-6. MCP server for AI assistants - done ([#4](https://github.com/klovbin/sshr/issues/4)), REST API for integrations ([#3](https://github.com/klovbin/sshr/issues/3))
+6. MCP server for AI assistants - done ([#4](https://github.com/klovbin/sshr/issues/4)), REST API for integrations - done ([#3](https://github.com/klovbin/sshr/issues/3))
 7. Sync across machines through our own sync server, end to end encrypted, the server stores only ciphertext ([#1](https://github.com/klovbin/sshr/issues/1))
 
 Not planned: Eternal Terminal (another server daemon for what tmux and mosh already cover) and autossh (meant for permanent tunnels, not interactive work).

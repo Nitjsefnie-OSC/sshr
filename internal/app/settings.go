@@ -28,6 +28,9 @@ type Settings struct {
 	// server can also break them, most clients ask before each tool call,
 	// but that can be turned off on their side
 	MCPCommands bool `json:"mcp_commands,omitempty"`
+	// APICommands enables POST /v1/hosts/{host}/run in sshr serve, off by
+	// default for the same reason as MCPCommands
+	APICommands bool `json:"api_commands,omitempty"`
 }
 
 func settingsPath() (string, error) {
