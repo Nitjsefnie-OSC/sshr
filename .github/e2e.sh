@@ -75,6 +75,15 @@ mcp inner 'echo via-jump-$((40+2))' | tee "$w/out2" | grep 'via-jump-42'
 # shellcheck disable=SC2016
 test "$("$sshr" run -t e2e -- 'echo run-$((40+2))' | grep -c '^run-42$')" = 2
 
+# send a folder through the jump host and get it back
+mkdir -p "$w/tree/sub"
+echo one >"$w/tree/a.txt"
+echo two >"$w/tree/sub/b.txt"
+"$sshr" send inner "$w/tree" --to /tmp/sshr-e2e-copy </dev/null
+mkdir -p "$w/back"
+"$sshr" get key /tmp/sshr-e2e-copy --to "$w/back" </dev/null
+diff -r "$w/tree" "$w/back/sshr-e2e-copy"
+
 echo "hello from ci" >"$w/up.txt"
 remote="$("$sshr" paste -f "$w/up.txt" key | tail -n 1)"
 mcp key "cat $remote" | grep 'hello from ci'

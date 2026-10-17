@@ -42,6 +42,15 @@ sshr list '#prod' db           # exact tag prod and "db" anywhere
 
 App: **Tags** in the host form, the search field above the list takes the same words. Tags sync with the hosts
 
+## Copying files
+
+```sh
+sshr send web report.pdf logs/ --to /srv/in   # to the home folder without --to
+sshr get web /var/log/nginx --to ./logs       # to the current folder without --to
+```
+
+scp with the host's own key, password, jump hosts and shared connection, folders copy whole
+
 ## Running a command on many hosts
 
 ```sh

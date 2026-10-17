@@ -11,6 +11,7 @@ Connecting
 - whether a host answers: `sshr ping`, `sshr list --ping`, a dot in the app, off by default
 - tags and search in the CLI and the app ([#31](https://github.com/klovbin/sshr/issues/31))
 - one command on many hosts by tag or name, `sshr run` ([#33](https://github.com/klovbin/sshr/issues/33))
+- copying files and folders, `sshr send` and `sshr get` ([#32](https://github.com/klovbin/sshr/issues/32))
 
 Passwords and keys
 
@@ -49,7 +50,7 @@ Needed before a release
 Features
 
 4. Bitwarden for passwords and keys, like 1Password ([#20](https://github.com/klovbin/sshr/issues/20))
-5. Copy files to and from a host, `sshr send` and `sshr get` ([#32](https://github.com/klovbin/sshr/issues/32))
+5. Drag and drop files onto a host in the app ([#32](https://github.com/klovbin/sshr/issues/32))
 6. Fall back to a gateway when the direct connection fails ([#28](https://github.com/klovbin/sshr/issues/28))
 7. Local commands before and after connect, their fields go on the #30 list ([#29](https://github.com/klovbin/sshr/issues/29))
 8. Import from PuTTY, MobaXterm, Remmina, Termius, Royal TS, through the #30 list ([#34](https://github.com/klovbin/sshr/issues/34))

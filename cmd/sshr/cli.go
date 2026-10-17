@@ -57,6 +57,10 @@ func runCLI(args []string) {
 		cmdTag(store, args[1:])
 	case "run":
 		cmdRun(store, args[1:])
+	case "send":
+		cmdCopy(store, true, args[1:])
+	case "get":
+		cmdCopy(store, false, args[1:])
 	case "add":
 		cmdAdd(store, args[1:])
 	case "rm", "remove":
@@ -599,6 +603,12 @@ Usage:
                                     or #x needs the exact tag, --ping
                                     adds whether each answers (on by
                                     default with health_check)
+  sshr send <name or id> <path>... [--to <remote folder>]
+  sshr get <name or id> <remote path>... [--to <local folder>]
+                                    copy files and folders with scp and
+                                    the host's own key, password and
+                                    jump hosts, send goes to the home
+                                    folder, get to the current one
   sshr run [-t <tag>]... [-j N] [--timeout S] [name...] -- <command>
                                     run a command on several hosts at
                                     once, by name and by tag (all tags),
