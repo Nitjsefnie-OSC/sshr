@@ -19,7 +19,14 @@ import (
 // with a space in its path, like the 1Password socket on macOS
 func testAgent(t *testing.T) (sock string, pubs map[string]string) {
 	t.Helper()
-	dir := filepath.Join(t.TempDir(), "Group Containers")
+	// a socket path has room for about 104 bytes, the macOS temp dir under
+	// /var/folders with the test name takes most of it
+	base, err := os.MkdirTemp("/tmp", "sshr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(base) })
+	dir := filepath.Join(base, "Group Containers")
 	os.MkdirAll(dir, 0o700)
 	sock = filepath.Join(dir, "agent.sock")
 	keys := agent.NewKeyring()
