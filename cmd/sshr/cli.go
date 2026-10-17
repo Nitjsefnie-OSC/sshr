@@ -490,10 +490,13 @@ func runMosh(h *app.Host, sshOpts []string, dest, session string) (code int, ok 
 		fmt.Fprintln(os.Stderr, "sshr: mosh is not installed, using ssh")
 		return 0, false
 	}
-	// mosh splits --ssh on spaces, so a key path with spaces would break it.
-	if strings.ContainsAny(h.Key, " \t") {
-		fmt.Fprintln(os.Stderr, "sshr: key path has spaces, mosh cannot pass it; using ssh")
-		return 0, false
+	// mosh splits --ssh on whitespace, any option with a space (a key or
+	// agent path, the sshr path in ProxyCommand) would be cut in two
+	for _, o := range sshOpts {
+		if strings.ContainsAny(o, " \t") {
+			fmt.Fprintf(os.Stderr, "sshr: the ssh option %q has spaces, mosh cannot pass it, using ssh\n", o)
+			return 0, false
+		}
 	}
 	fmt.Printf("Connecting to %s (%s:%d) with mosh...\n", h.Name, dest, h.Port)
 	started := time.Now()
