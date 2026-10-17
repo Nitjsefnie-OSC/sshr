@@ -157,7 +157,12 @@ func (s *Store) ProxyHop(chain, targetHost, targetPort string) (*Host, []string,
 		return nil, nil, err
 	}
 	if os.Getenv("SSHR_BATCH") == "1" {
-		args = append(args, "-o", "BatchMode=yes")
+		if hopCopy.PasswordMode == PasswordAsk {
+			return nil, nil, fmt.Errorf("jump host %s asks for its password every time, there is no terminal to ask in", hopCopy.Name)
+		}
+		if hopCopy.PasswordMode != PasswordSaved {
+			args = append(args, "-o", "BatchMode=yes")
+		}
 	}
 	args = append(args, "-W", hostPort(targetHost, targetPort), "--", hopCopy.Dest())
 	return &hopCopy, args, nil

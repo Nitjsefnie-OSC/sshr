@@ -17,27 +17,30 @@ import (
 
 // confirmModal is the delete confirmation overlay.
 type confirmModal struct {
-	open      bool
-	title     string
-	body      string
-	hostID    string
-	confirm   widget.Clickable
-	cancel    widget.Clickable
-	scrim     widget.Clickable // click outside card closes
-	card      widget.Clickable // absorbs presses on the card
-	blockScrim bool            // skip one scrim click after open
+	open       bool
+	title      string
+	body       string
+	hostID     string
+	confirm    widget.Clickable
+	cancel     widget.Clickable
+	scrim      widget.Clickable // click outside card closes
+	card       widget.Clickable // absorbs presses on the card
+	blockScrim bool             // skip one scrim click after open
 }
 
 // formModal is the add/edit host form overlay.
 type formModal struct {
-	open       bool
-	editID     string // empty = add
-	err        string
-	save       widget.Clickable
-	cancel     widget.Clickable
-	scrim      widget.Clickable
-	card       widget.Clickable
-	blockScrim bool
+	open   bool
+	editID string // empty = add
+	// hasSavedPassword is set when the edited host already has a saved
+	// password, an empty password field then keeps it
+	hasSavedPassword bool
+	err              string
+	save             widget.Clickable
+	cancel           widget.Clickable
+	scrim            widget.Clickable
+	card             widget.Clickable
+	blockScrim       bool
 }
 
 func (s *state) openDeleteConfirm(h sshrapp.Host) {
@@ -66,14 +69,19 @@ func (s *state) openEditForm(h sshrapp.Host) {
 	s.hostEd.SetText(h.Host)
 	s.userEd.SetText(h.User)
 	s.portEd.SetText(fmt.Sprintf("%d", h.Port))
+	// the saved password is not decrypted for the form, it stays in the
+	// vault unless a new one is typed
+	s.passEd.SetText("")
 	if h.Key != "" {
 		s.authKind = authKey
 		s.keyEd.SetText(h.Key)
-		s.passEd.SetText("")
 	} else {
 		s.authKind = authPassword
 		s.keyEd.SetText("")
-		s.passEd.SetText(h.Password)
+		if h.PasswordMode == sshrapp.PasswordAsk {
+			s.passMode = sshrapp.PasswordAsk
+		}
+		s.form.hasSavedPassword = h.PasswordMode == sshrapp.PasswordSaved
 	}
 	s.passEd.Mask = '•'
 	s.jumpEd.SetText(h.Jump)

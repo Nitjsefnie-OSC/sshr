@@ -5,9 +5,9 @@ import (
 	"strings"
 
 	"gioui.org/app"
+	"gioui.org/io/pointer"
 	"gioui.org/layout"
 	"gioui.org/widget"
-	"gioui.org/io/pointer"
 
 	sshrapp "sshr.dev/internal/app"
 	"sshr.dev/internal/i18n"
@@ -49,10 +49,10 @@ type state struct {
 	win          *app.Window
 
 	// Host form editors (shown in form modal).
-	nameEd   widget.Editor
-	hostEd   widget.Editor
-	userEd   widget.Editor
-	portEd   widget.Editor
+	nameEd      widget.Editor
+	hostEd      widget.Editor
+	userEd      widget.Editor
+	portEd      widget.Editor
 	keyEd       widget.Editor
 	passEd      widget.Editor
 	jumpEd      widget.Editor
@@ -60,33 +60,37 @@ type state struct {
 	authKind    authKind
 	authPassBtn widget.Clickable
 	authKeyBtn  widget.Clickable
+	// passMode is sshrapp.PasswordSaved or sshrapp.PasswordAsk
+	passMode     string
+	passSavedBtn widget.Clickable
+	passAskBtn   widget.Clickable
 	// session picker in the host form: "", tmux or zellij
 	session          string
 	sessionOffBtn    widget.Clickable
 	sessionTmuxBtn   widget.Clickable
 	sessionZellijBtn widget.Clickable
 
-	addBtn      widget.Clickable
-	settingsBtn widget.Clickable
-	hostsBtn    widget.Clickable
-	backBtn     widget.Clickable
-	aboutBtn    widget.Clickable
-	langNavBtn  widget.Clickable
-	langBtns    []widget.Clickable
-	langDropBtn widget.Clickable
-	langOpen    bool
-	moshBox     widget.Bool
-	reuseBox    widget.Bool
-	list        widget.List
+	addBtn       widget.Clickable
+	settingsBtn  widget.Clickable
+	hostsBtn     widget.Clickable
+	backBtn      widget.Clickable
+	aboutBtn     widget.Clickable
+	langNavBtn   widget.Clickable
+	langBtns     []widget.Clickable
+	langDropBtn  widget.Clickable
+	langOpen     bool
+	moshBox      widget.Bool
+	reuseBox     widget.Bool
+	list         widget.List
 	hostDelBtns  []widget.Clickable // parallel to hosts
 	hostEditBtns []widget.Clickable // parallel to hosts
-	uploads     chan uploadResult  // finished image uploads from goroutines
-	uploading   bool
-	modal       confirmModal       // delete confirm
-	form        formModal          // add/edit host
-	settingsIC  *widget.Icon
-	hostsIC     *widget.Icon
-	dropIC      *widget.Icon
+	uploads      chan uploadResult  // finished image uploads from goroutines
+	uploading    bool
+	modal        confirmModal // delete confirm
+	form         formModal    // add/edit host
+	settingsIC   *widget.Icon
+	hostsIC      *widget.Icon
+	dropIC       *widget.Icon
 
 	sidebarW float32
 	split    splitDrag
@@ -186,6 +190,12 @@ func (s *state) handle(gtx layout.Context) {
 	}
 	if s.authKeyBtn.Clicked(gtx) {
 		s.authKind = authKey
+	}
+	if s.passSavedBtn.Clicked(gtx) {
+		s.passMode = sshrapp.PasswordSaved
+	}
+	if s.passAskBtn.Clicked(gtx) {
+		s.passMode = sshrapp.PasswordAsk
 	}
 	if s.sessionOffBtn.Clicked(gtx) {
 		s.session = ""
@@ -288,7 +298,9 @@ func (s *state) clearForm() {
 	s.fwdEd.SetText("")
 	s.session = ""
 	s.authKind = authPassword
+	s.passMode = sshrapp.PasswordSaved
 	s.form.editID = ""
+	s.form.hasSavedPassword = false
 }
 
 func (s *state) mapErr(err error) string {
@@ -301,6 +313,12 @@ func (s *state) mapErr(err error) string {
 		return s.t("err.port_invalid")
 	case errors.Is(err, sshrapp.ErrNotFound):
 		return s.t("err.not_found")
+	case errors.Is(err, sshrapp.ErrNoKeychain):
+		return s.t("err.noKeychain")
+	case errors.Is(err, sshrapp.ErrPasswordRequired):
+		return s.t("err.password_required")
+	case errors.Is(err, sshrapp.ErrAsksPassword):
+		return s.t("err.asksPassword")
 	default:
 		return err.Error()
 	}
@@ -318,6 +336,7 @@ func (s *state) saveHost() {
 	}
 	key := ""
 	password := ""
+	passMode := ""
 	if s.authKind == authKey {
 		key = strings.TrimSpace(s.keyEd.Text())
 		if key == "" {
@@ -329,9 +348,13 @@ func (s *state) saveHost() {
 			s.form.err = err.Error()
 			return
 		}
+	} else if s.passMode == sshrapp.PasswordAsk {
+		passMode = sshrapp.PasswordAsk
 	} else {
-		password = strings.TrimSpace(s.passEd.Text())
-		if password == "" {
+		passMode = sshrapp.PasswordSaved
+		// kept as typed, spaces at the ends can be part of a password
+		password = s.passEd.Text()
+		if password == "" && !s.form.hasSavedPassword {
 			s.form.err = s.t("err.password_required")
 			return
 		}
@@ -343,15 +366,16 @@ func (s *state) saveHost() {
 	}
 	var h *sshrapp.Host
 	in := sshrapp.Host{
-		Name:     s.nameEd.Text(),
-		Host:     s.hostEd.Text(),
-		User:     s.userEd.Text(),
-		Port:     port,
-		Key:      key,
-		Password: password,
-		Jump:     s.jumpEd.Text(),
-		Session:  s.session,
-		Forwards: forwards,
+		Name:         s.nameEd.Text(),
+		Host:         s.hostEd.Text(),
+		User:         s.userEd.Text(),
+		Port:         port,
+		Key:          key,
+		PasswordMode: passMode,
+		Password:     password,
+		Jump:         s.jumpEd.Text(),
+		Session:      s.session,
+		Forwards:     forwards,
 	}
 	if s.form.editID != "" {
 		h, err = s.store.Update(s.form.editID, in)

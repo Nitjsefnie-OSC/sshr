@@ -34,7 +34,7 @@ func (s *state) startUpload(h sshrapp.Host) {
 		res := uploadResult{host: h.Name}
 		img, err := clip.ReadImage()
 		if err == nil {
-			// No terminal to ask for a password in: key or agent only.
+			// No terminal to ask in: a key, the agent or a saved password
 			res.remote, err = s.store.UploadImage(&h, img.Data, img.Ext, true)
 		}
 		res.err = err
@@ -53,7 +53,7 @@ func (s *state) finishUploads(gtx layout.Context) {
 		case errors.Is(res.err, clip.ErrNoImage):
 			s.err = s.t("err.noImage")
 		case res.err != nil:
-			s.err = res.err.Error()
+			s.err = s.mapErr(res.err)
 		default:
 			gtx.Execute(clipboard.WriteCmd{
 				Type: "application/text",

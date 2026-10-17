@@ -20,6 +20,18 @@ var (
 	ErrUserRequired = errors.New("user_required")
 	ErrNotFound     = errors.New("not_found")
 	ErrPortInvalid  = errors.New("port_invalid")
+	// ErrPasswordRequired means PasswordSaved was chosen with no password
+	ErrPasswordRequired = errors.New("password_required")
+)
+
+// Password modes of a host, an empty mode means no password at all, the
+// key file, ssh-agent or ssh config decide
+const (
+	// PasswordSaved keeps the password sealed with the vault key in the
+	// host file, sshr hands it to ssh
+	PasswordSaved = "saved"
+	// PasswordAsk stores nothing, ssh asks on the terminal every time
+	PasswordAsk = "ask"
 )
 
 // ParsePort reads a TCP port: digits only, 1–65535.
@@ -42,16 +54,25 @@ func (e *AmbiguousError) Error() string {
 	return fmt.Sprintf("%q matches %d hosts", e.Query, len(e.Hosts))
 }
 
-// Host is one SSH target. Password is stored in the local vault (0600);
-// prefer a key when you can.
+// Host is one SSH target
 type Host struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Host     string `json:"host"`
-	Port     int    `json:"port"`
-	User     string `json:"user"`
-	Key      string `json:"key,omitempty"`
-	Password string `json:"password,omitempty"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Host string `json:"host"`
+	Port int    `json:"port"`
+	User string `json:"user"`
+	Key  string `json:"key,omitempty"`
+	// PasswordMode is PasswordSaved, PasswordAsk or empty
+	PasswordMode string `json:"password_mode,omitempty"`
+	// Password is the plain password, in memory only, set it to save a new
+	// one, Unlock fills it from PasswordSealed before connecting
+	Password string `json:"-"`
+	// PasswordSealed is the password encrypted with the vault key
+	PasswordSealed string `json:"password_sealed,omitempty"`
+	// PlainPassword is the unencrypted "password" field older versions
+	// wrote, it is sealed and dropped on the next save that can reach the
+	// keychain
+	PlainPassword string `json:"password,omitempty"`
 	// Jump lists hosts to go through, "a,b": saved host names/IDs or
 	// [user@]host[:port], empty means a direct connection
 	Jump string `json:"jump,omitempty"`
@@ -91,6 +112,9 @@ func (s *Store) Add(in Host) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := needPassword(&h); err != nil {
+		return nil, err
+	}
 	if h.ID, err = newID(); err != nil {
 		return nil, err
 	}
@@ -125,9 +149,20 @@ func cleanHost(h Host) (Host, error) {
 		return h, ErrPortInvalid
 	}
 	h.Key = strings.TrimSpace(h.Key)
-	h.Password = strings.TrimSpace(h.Password)
+	// a password is kept as typed, spaces at the ends can be part of it
+	if h.Password != "" && h.PasswordMode == "" {
+		h.PasswordMode = PasswordSaved
+	}
+	switch h.PasswordMode {
+	case "", PasswordAsk, PasswordSaved:
+	default:
+		return h, fmt.Errorf("unknown password mode %q", h.PasswordMode)
+	}
 	if h.Key != "" {
-		h.Password = ""
+		h.PasswordMode = ""
+	}
+	if h.PasswordMode != PasswordSaved {
+		h.Password, h.PasswordSealed, h.PlainPassword = "", "", ""
 	}
 	var err error
 	if h.Jump, err = checkJump(h.Jump, h.Name); err != nil {
@@ -166,6 +201,9 @@ func (s *Store) List() ([]Host, error) {
 		}
 		// The file name is the source of truth: Delete builds its path from ID.
 		h.ID = strings.TrimSuffix(e.Name(), ".json")
+		if h.PlainPassword != "" && h.PasswordMode == "" && h.Key == "" {
+			h.PasswordMode = PasswordSaved
+		}
 		out = append(out, h)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -241,6 +279,13 @@ func (s *Store) Update(id string, in Host) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
+	// no new password typed keeps the saved one
+	if h.PasswordMode == PasswordSaved && h.Password == "" && h.PasswordSealed == "" && h.PlainPassword == "" {
+		h.PasswordSealed, h.PlainPassword = cur.PasswordSealed, cur.PlainPassword
+	}
+	if err := needPassword(&h); err != nil {
+		return nil, err
+	}
 	h.ID, h.CreatedAt = cur.ID, cur.CreatedAt
 	if err := s.save(&h); err != nil {
 		return nil, err
@@ -268,7 +313,67 @@ func checkJump(jump, name string) (string, error) {
 	return jump, nil
 }
 
+// needPassword refuses PasswordSaved with no password to save
+func needPassword(h *Host) error {
+	if h.PasswordMode == PasswordSaved && h.Password == "" && h.PasswordSealed == "" && h.PlainPassword == "" {
+		return ErrPasswordRequired
+	}
+	return nil
+}
+
+// sealPassword encrypts a new password, or an old unencrypted one, before
+// the host is written, an old one stays as it was when the keychain is out
+// of reach, a new one is refused then, it is never written unencrypted
+func sealPassword(h *Host) error {
+	if h.PasswordMode != PasswordSaved {
+		return nil
+	}
+	plain := h.Password
+	if plain == "" {
+		plain = h.PlainPassword
+	}
+	if plain == "" {
+		return nil
+	}
+	sealed, err := seal([]byte(plain), h.ID, "password")
+	if err != nil {
+		if h.Password == "" || h.Password == h.PlainPassword {
+			return nil
+		}
+		return err
+	}
+	h.PasswordSealed, h.PlainPassword = sealed, ""
+	return nil
+}
+
+// Unlock fills h.Password from the vault before connecting, a host without
+// a saved password is left as it is
+func Unlock(h *Host) error {
+	if h.PasswordMode != PasswordSaved || h.Password != "" {
+		return nil
+	}
+	switch {
+	case h.PasswordSealed != "":
+		plain, err := unseal(h.PasswordSealed, h.ID, "password")
+		if errors.Is(err, ErrSealBroken) {
+			return fmt.Errorf("the saved password of %s does not open with the vault key of this machine (keychain reset or the host copied from another machine), save the password again", h.Name)
+		}
+		if err != nil {
+			return err
+		}
+		h.Password = string(plain)
+	case h.PlainPassword != "":
+		h.Password = h.PlainPassword
+	default:
+		return fmt.Errorf("%s has no saved password, save it again", h.Name)
+	}
+	return nil
+}
+
 func (s *Store) save(h *Host) error {
+	if err := sealPassword(h); err != nil {
+		return err
+	}
 	b, err := json.MarshalIndent(h, "", "  ")
 	if err != nil {
 		return err

@@ -22,9 +22,14 @@ func layoutHostsList(gtx layout.Context, th *material.Theme, s *state) layout.Di
 	}
 	return material.List(th, &s.list).Layout(gtx, len(s.hosts), func(gtx layout.Context, i int) layout.Dimensions {
 		h := s.hosts[i]
-		authLabel := s.t("auth.password.short")
-		if h.Key != "" {
+		authLabel := ""
+		switch {
+		case h.Key != "":
 			authLabel = s.t("auth.key.short") + ": " + filepath.Base(h.Key)
+		case h.PasswordMode == sshrapp.PasswordSaved:
+			authLabel = s.t("auth.password.short")
+		case h.PasswordMode == sshrapp.PasswordAsk:
+			authLabel = s.t("auth.ask.short")
 		}
 		return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
@@ -113,7 +118,21 @@ func layoutForm(gtx layout.Context, th *material.Theme, s *state) layout.Dimensi
 	if s.authKind == authKey {
 		children = append(children, spacer(10), field(th, s.t("field.key"), &s.keyEd))
 	} else {
-		children = append(children, spacer(10), passwordField(th, s.t("field.password"), &s.passEd))
+		children = append(children, spacer(10), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return layoutPassModePicker(gtx, th, s)
+		}))
+		if s.passMode != sshrapp.PasswordAsk {
+			hintKey := "field.password.hint"
+			if s.form.hasSavedPassword {
+				hintKey = "field.password.keep"
+			}
+			children = append(children, spacer(10), passwordField(th, s.t("field.password"), &s.passEd),
+				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+					hint := material.Caption(th, s.t(hintKey))
+					hint.Color = colMuted
+					return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, hint.Layout)
+				}))
+		}
 	}
 	children = append(children, spacer(12), field(th, s.t("field.jump"), &s.jumpEd),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -164,6 +183,20 @@ func layoutSessionPicker(gtx layout.Context, th *material.Theme, s *state) layou
 			hint := material.Caption(th, s.t("field.session.hint"))
 			hint.Color = colMuted
 			return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, hint.Layout)
+		}),
+	)
+}
+
+// layoutPassModePicker chooses between a password saved encrypted in sshr
+// and one typed on every connect
+func layoutPassModePicker(gtx layout.Context, th *material.Theme, s *state) layout.Dimensions {
+	return layout.Flex{}.Layout(gtx,
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return authChoiceBtn(gtx, th, &s.passSavedBtn, s.t("auth.pass.saved"), s.passMode != sshrapp.PasswordAsk)
+		}),
+		layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return authChoiceBtn(gtx, th, &s.passAskBtn, s.t("auth.pass.ask"), s.passMode == sshrapp.PasswordAsk)
 		}),
 	)
 }

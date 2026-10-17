@@ -1,54 +1,197 @@
 package app
 
 import (
+	"bufio"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"time"
+
+	"golang.org/x/term"
 )
 
-// AttachPasswordAuth makes ssh read h.Password via SSH_ASKPASS when no key
-// is set. Returns a cleanup that removes the temp askpass script.
-func AttachPasswordAuth(cmd *exec.Cmd, h *Host) func() {
+// Environment of the askpass helper, ssh runs sshr itself as SSH_ASKPASS
+// with the prompt as the only argument
+const (
+	askpassSockEnv  = "SSHR_ASKPASS"
+	askpassTokenEnv = "SSHR_ASKPASS_TOKEN"
+)
+
+// AttachPasswordAuth hands the saved password of h to ssh, ssh runs sshr as
+// SSH_ASKPASS and the helper fetches the password from a socket this process
+// serves, the password is never written to disk or put in the environment,
+// the socket answers once and closes, a wrong password is not retried, the
+// returned cleanup stops it, hosts without a saved password get a no-op
+func AttachPasswordAuth(cmd *exec.Cmd, h *Host) (func(), error) {
 	noop := func() {}
-	if cmd == nil || h == nil || h.Password == "" || h.Key != "" {
-		return noop
+	if cmd == nil || h == nil || h.Key != "" || h.PasswordMode != PasswordSaved {
+		return noop, nil
 	}
-	dir, err := os.MkdirTemp("", "sshr-askpass-*")
+	if err := Unlock(h); err != nil {
+		return noop, err
+	}
+	exe, err := os.Executable()
 	if err != nil {
-		return noop
+		return noop, err
 	}
-	script := filepath.Join(dir, "askpass")
-	// SSH_ASKPASS_REQUIRE=force sends every prompt here, the host key
-	// question and key passphrases included, only a password prompt gets the
-	// password, the rest is asked on the terminal, input hidden unless it is
-	// a yes/no question
-	body := "#!/bin/sh\n" +
-		"case \"$1\" in\n" +
-		"*[Pp]assword:|*[Pp]assword:\\ ) printf '%s\\n' " + shQuote(h.Password) + " ;;\n" +
-		"*)\n" +
-		"\t( : </dev/tty ) 2>/dev/null || exit 1\n" +
-		"\tprintf '%s' \"$1\" >/dev/tty\n" +
-		"\tcase \"$1\" in *'?'|*'? '|*yes/no*) ;; *) stty -echo </dev/tty ;; esac\n" +
-		"\tIFS= read -r a </dev/tty\n" +
-		"\tstty echo </dev/tty\n" +
-		"\tcase \"$1\" in *'?'|*'? '|*yes/no*) ;; *) printf '\\n' >/dev/tty ;; esac\n" +
-		"\tprintf '%s\\n' \"$a\" ;;\n" +
-		"esac\n"
-	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
-		os.RemoveAll(dir)
-		return noop
+	sock, token, stop, err := servePassword(h.Password)
+	if err != nil {
+		return noop, err
 	}
 	env := cmd.Env
 	if env == nil {
 		env = os.Environ()
 	}
-	env = append(env,
-		"SSH_ASKPASS="+script,
+	cmd.Env = append(StripAskpassEnv(env),
+		"SSH_ASKPASS="+exe,
 		"SSH_ASKPASS_REQUIRE=force",
+		askpassSockEnv+"="+sock,
+		askpassTokenEnv+"="+token,
 	)
-	if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
-		env = append(env, "DISPLAY=:0")
+	return stop, nil
+}
+
+// StripAskpassEnv drops the askpass settings of a host from env, a jump hop
+// must not answer its own password prompt with the password of the host
+// behind it
+func StripAskpassEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		switch name {
+		case "SSH_ASKPASS", "SSH_ASKPASS_REQUIRE", askpassSockEnv, askpassTokenEnv:
+			continue
+		}
+		out = append(out, kv)
 	}
-	cmd.Env = env
-	return func() { os.RemoveAll(dir) }
+	return out
+}
+
+// servePassword listens on a unix socket in a 0700 directory and gives
+// password once to a client that sends token
+func servePassword(password string) (sock, token string, stop func(), err error) {
+	dir, err := ControlDir()
+	cleanDir := func() {}
+	if err != nil {
+		if dir, err = os.MkdirTemp("", "sshr-"); err != nil {
+			return "", "", nil, err
+		}
+		cleanDir = func() { os.Remove(dir) }
+	}
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		cleanDir()
+		return "", "", nil, err
+	}
+	token = hex.EncodeToString(b[:])
+	sock = filepath.Join(dir, "ap-"+token[:12])
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		cleanDir()
+		return "", "", nil, err
+	}
+	go func() {
+		defer ln.Close()
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.SetDeadline(time.Now().Add(5 * time.Second))
+			line, _ := bufio.NewReader(io.LimitReader(c, 128)).ReadString('\n')
+			if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(line)), []byte(token)) == 1 {
+				io.WriteString(c, password+"\n")
+				c.Close()
+				return
+			}
+			c.Close()
+		}
+	}()
+	stop = func() {
+		ln.Close()
+		os.Remove(sock)
+		cleanDir()
+	}
+	return sock, token, stop, nil
+}
+
+// IsAskpassCall tells whether ssh started this process as SSH_ASKPASS
+func IsAskpassCall(args []string) bool {
+	return len(args) == 1 && os.Getenv(askpassSockEnv) != ""
+}
+
+// isPasswordPrompt matches "user@host's password: " and the
+// keyboard-interactive "(user@host) Password: "
+func isPasswordPrompt(prompt string) bool {
+	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(prompt)), "password:")
+}
+
+// RunAskpass answers one ssh prompt and returns the exit code, a password
+// prompt gets the saved password, any other prompt (host key, key
+// passphrase, one-time code) is asked on the terminal, exit 1 tells ssh no
+// answer was given
+func RunAskpass(prompt string) int {
+	if isPasswordPrompt(prompt) {
+		pw, err := fetchPassword(os.Getenv(askpassSockEnv), os.Getenv(askpassTokenEnv))
+		if err != nil {
+			return 1
+		}
+		fmt.Println(pw)
+		return 0
+	}
+	answer, err := askTerminal(prompt)
+	if err != nil {
+		return 1
+	}
+	fmt.Println(answer)
+	return 0
+}
+
+// fetchPassword gets the password from the socket of AttachPasswordAuth,
+// after the first answer the socket is closed and this fails
+func fetchPassword(sock, token string) (string, error) {
+	c, err := net.DialTimeout("unix", sock, 5*time.Second)
+	if err != nil {
+		return "", err
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := io.WriteString(c, token+"\n"); err != nil {
+		return "", err
+	}
+	line, err := bufio.NewReader(c).ReadString('\n')
+	if err != nil {
+		return "", errors.New("no password from sshr")
+	}
+	return strings.TrimSuffix(line, "\n"), nil
+}
+
+// askTerminal shows prompt on the terminal and reads the answer, hidden
+// unless it is a yes/no question
+func askTerminal(prompt string) (string, error) {
+	in, out, err := openTerminal()
+	if err != nil {
+		return "", err
+	}
+	defer in.Close()
+	if out != in {
+		defer out.Close()
+	}
+	fmt.Fprint(out, prompt)
+	p := strings.TrimSpace(prompt)
+	if strings.HasSuffix(p, "?") || strings.Contains(p, "yes/no") {
+		line, err := bufio.NewReader(in).ReadString('\n')
+		return strings.TrimRight(line, "\r\n"), err
+	}
+	b, err := term.ReadPassword(int(in.Fd()))
+	fmt.Fprintln(out)
+	return string(b), err
 }

@@ -12,6 +12,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"golang.org/x/term"
+
 	"sshr.dev/internal/app"
 )
 
@@ -89,11 +91,16 @@ func cmdList(store *app.Store) {
 		return
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "NAME\tHOST\tUSER\tPORT\tKEY\tID")
+	fmt.Fprintln(w, "NAME\tHOST\tUSER\tPORT\tAUTH\tID")
 	for _, h := range hosts {
 		keyCol := "-"
-		if h.Key != "" {
+		switch {
+		case h.Key != "":
 			keyCol = filepath.Base(h.Key)
+		case h.PasswordMode == app.PasswordSaved:
+			keyCol = "password"
+		case h.PasswordMode == app.PasswordAsk:
+			keyCol = "ask"
 		}
 		id := h.ID
 		if len(id) > 8 {
@@ -106,7 +113,7 @@ func cmdList(store *app.Store) {
 
 func cmdAdd(store *app.Store, args []string) {
 	var host, name, user, key, jump, session string
-	noKey := false
+	noKey, askPassword := false, false
 	port := 22
 	positional := make([]string, 0)
 
@@ -132,6 +139,8 @@ func cmdAdd(store *app.Store, args []string) {
 			session = args[i]
 		} else if a == "--no-key" {
 			noKey = true
+		} else if a == "--ask-password" {
+			askPassword = true
 		} else if (a == "-n" || a == "--name") && i+1 < len(args) {
 			i++
 			name = args[i]
@@ -153,7 +162,7 @@ func cmdAdd(store *app.Store, args []string) {
 		host = positional[0]
 	}
 	if host == "" {
-		fmt.Fprintln(os.Stderr, "Usage: sshr add <host> -u <user> [-n <name>] [-p <port>] [-k <key> | --no-key] [-J <jump>] [--session tmux|zellij]")
+		fmt.Fprintln(os.Stderr, "Usage: sshr add <host> -u <user> [-n <name>] [-p <port>] [-k <key> | --no-key | --ask-password] [-J <jump>] [--session tmux|zellij]")
 		os.Exit(1)
 	}
 	if user == "" {
@@ -164,8 +173,14 @@ func cmdAdd(store *app.Store, args []string) {
 		fmt.Fprintln(os.Stderr, "sshr add: -k and --no-key cannot be used together")
 		os.Exit(1)
 	}
-	var password string
-	if key != "" {
+	if askPassword && (key != "" || noKey) {
+		fmt.Fprintln(os.Stderr, "sshr add: --ask-password cannot be used with -k or --no-key")
+		os.Exit(1)
+	}
+	var password, passwordMode string
+	if askPassword {
+		passwordMode = app.PasswordAsk
+	} else if key != "" {
 		expanded := app.ExpandHome(key)
 		if err := app.CheckPrivateKey(expanded); err != nil {
 			fmt.Fprintf(os.Stderr, "sshr add: %v\n", err)
@@ -173,13 +188,14 @@ func cmdAdd(store *app.Store, args []string) {
 		}
 		key = expanded
 	} else if !noKey {
-		key, password = promptAuthMethod()
+		key, password, passwordMode = promptAuthMethod()
 	} else {
-		password = promptPassword()
+		password, passwordMode = promptPassword(), app.PasswordSaved
 	}
 	h, err := store.Add(app.Host{
 		Name: name, Host: host, User: user, Port: port,
-		Key: key, Password: password, Jump: jump, Session: session,
+		Key: key, PasswordMode: passwordMode, Password: password,
+		Jump: jump, Session: session,
 	})
 	if err != nil {
 		fatal(err)
@@ -187,8 +203,10 @@ func cmdAdd(store *app.Store, args []string) {
 	msg := fmt.Sprintf("Added %s (%s@%s:%d)", h.Name, h.User, h.Host, h.Port)
 	if h.Key != "" {
 		msg += fmt.Sprintf(" key=%s", h.Key)
-	} else if h.Password != "" {
-		msg += " auth=password"
+	} else if h.PasswordMode == app.PasswordSaved {
+		msg += " auth=password (encrypted)"
+	} else if h.PasswordMode == app.PasswordAsk {
+		msg += " auth=ask"
 	}
 	if h.Jump != "" {
 		msg += " via " + h.Jump
@@ -329,20 +347,18 @@ func cmdProxy(store *app.Store, args []string) {
 		fmt.Fprintf(os.Stderr, "sshr: %v\n", err)
 		os.Exit(1)
 	}
+	cmd := exec.Command("ssh", sshArgs...)
 	// The askpass of the host behind this hop is in our environment, it must
 	// not answer this hop's password prompt
-	env := make([]string, 0, len(os.Environ()))
-	for _, kv := range os.Environ() {
-		if !strings.HasPrefix(kv, "SSH_ASKPASS=") && !strings.HasPrefix(kv, "SSH_ASKPASS_REQUIRE=") {
-			env = append(env, kv)
-		}
-	}
-	cmd := exec.Command("ssh", sshArgs...)
-	cmd.Env = env
+	cmd.Env = app.StripAskpassEnv(os.Environ())
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cleanup := app.AttachPasswordAuth(cmd, hop)
+	cleanup, err := app.AttachPasswordAuth(cmd, hop)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sshr: %v\n", err)
+		os.Exit(1)
+	}
 	err = cmd.Run()
 	cleanup()
 	if err != nil {
@@ -392,7 +408,10 @@ func run(h *app.Host, bin string, args ...string) int {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cleanup := app.AttachPasswordAuth(cmd, h)
+	cleanup, err := app.AttachPasswordAuth(cmd, h)
+	if err != nil {
+		fatal(err)
+	}
 	defer cleanup()
 	if err := cmd.Run(); err != nil {
 		var exitErr *exec.ExitError
@@ -410,10 +429,15 @@ func printUsage() {
 Usage:
   sshr                              open GUI
   sshr list                         list saved hosts
-  sshr add <host> -u <user> [-n <name>] [-p <port>] [-k <key> | --no-key] [-J <jump>]
+  sshr add <host> -u <user> [-n <name>] [-p <port>]
+           [-k <key> | --no-key | --ask-password] [-J <jump>]
            [--session tmux|zellij]
                                     add a host (asks for the auth method
-                                    unless -k or --no-key is given),
+                                    unless -k, --no-key or --ask-password
+                                    is given), --no-key saves a password
+                                    encrypted with a key from the system
+                                    keychain, --ask-password saves none,
+                                    ssh asks on every connect,
                                     -J a,b goes through jump hosts: saved
                                     host names or [user@]host[:port],
                                     --session attaches to tmux/zellij
@@ -444,34 +468,60 @@ Usage:
                                     or not, overriding the setting`)
 }
 
-func promptAuthMethod() (key, password string) {
+func promptAuthMethod() (key, password, mode string) {
 	scanner := bufio.NewScanner(os.Stdin)
 	fmt.Println("\nAuthentication method:")
 	fmt.Println("  [1] Specify private key path")
 	fmt.Println("  [2] Find key automatically (~/.ssh/)")
-	fmt.Println("  [3] Password")
-	fmt.Print("\nChoice [1/2/3]: ")
+	fmt.Println("  [3] Password, saved encrypted")
+	fmt.Println("  [4] Password, asked on every connect")
+	fmt.Print("\nChoice [1/2/3/4]: ")
 
 	choice := readAnswer(scanner)
 	switch choice {
 	case "1":
-		return promptKeyPath(scanner), ""
+		return promptKeyPath(scanner), "", ""
 	case "2":
-		return pickFromSSHKeys(scanner), ""
+		return pickFromSSHKeys(scanner), "", ""
 	case "3":
-		return "", promptPassword()
+		return "", promptPasswordWith(scanner), app.PasswordSaved
+	case "4":
+		return "", "", app.PasswordAsk
 	default:
 		fmt.Fprintf(os.Stderr, "\nsshr add: invalid choice %q\n", choice)
 		os.Exit(1)
-		return "", ""
+		return "", "", ""
 	}
 }
 
 func promptPassword() string {
+	return promptPasswordWith(bufio.NewScanner(os.Stdin))
+}
+
+// promptPasswordWith checks the keychain first, a password typed only to be
+// refused at save is wasted, then reads it hidden from a terminal, or as a
+// line from a pipe
+func promptPasswordWith(scanner *bufio.Scanner) string {
+	if err := app.CheckKeychain(); err != nil {
+		fmt.Fprintf(os.Stderr, "sshr add: %v (--ask-password)\n", err)
+		os.Exit(1)
+	}
 	fmt.Print("Password: ")
-	// Visible on purpose when term package is not used; vault file is 0600.
-	scanner := bufio.NewScanner(os.Stdin)
-	pw := readAnswer(scanner)
+	var pw string
+	if fd := int(os.Stdin.Fd()); term.IsTerminal(fd) {
+		b, err := term.ReadPassword(fd)
+		fmt.Println()
+		if err != nil {
+			fatal(err)
+		}
+		pw = string(b)
+	} else {
+		if !scanner.Scan() {
+			fmt.Fprintln(os.Stderr, "\nsshr add: no answer on stdin")
+			os.Exit(1)
+		}
+		pw = scanner.Text()
+	}
 	if pw == "" {
 		fmt.Fprintln(os.Stderr, "sshr add: empty password")
 		os.Exit(1)

@@ -11,6 +11,10 @@ import (
 	"time"
 )
 
+// ErrAsksPassword means the host asks for its password every time and there
+// is no terminal to ask in
+var ErrAsksPassword = errors.New("asks_password")
+
 // UploadTTL is how long an uploaded image stays on the server. It is meant
 // to be read once (by a person or a remote tool), not stored there.
 const UploadTTL = 15 * time.Minute
@@ -20,14 +24,18 @@ func SSHArgs(h *Host) []string {
 	args := []string{}
 	if h.Key != "" {
 		args = append(args, "-i", h.Key)
-	} else if h.Password != "" {
+	} else if h.PasswordMode != "" {
 		args = append(args,
-			"-o", "PreferredAuthentications=password",
+			// servers that log in through PAM ask with keyboard-interactive,
+			// the prompt is "(user@host) Password:"
+			"-o", "PreferredAuthentications=keyboard-interactive,password",
 			"-o", "PubkeyAuthentication=no",
+		)
+		if h.PasswordMode == PasswordSaved {
 			// a saved password is the same every time, retrying it only adds
 			// failures for fail2ban to count
-			"-o", "NumberOfPasswordPrompts=1",
-		)
+			args = append(args, "-o", "NumberOfPasswordPrompts=1")
+		}
 	}
 	return append(args, "-p", strconv.Itoa(h.Port))
 }
@@ -45,9 +53,11 @@ func (h *Host) Dest() string {
 // UploadTTL by a detached sleep; each upload also sweeps older files in case
 // that sleep was killed by a logout.
 //
-// batch disables password prompts (ssh -o BatchMode=yes): set it when there
-// is no terminal to ask in, as in the GUI, the upload goes through the
-// host's jump hosts like a normal connection
+// batch disables prompts on the terminal (ssh -o BatchMode=yes), set it when
+// there is no terminal to ask in, as in the GUI, a saved password is still
+// used, a host that asks for its password every time fails with
+// ErrAsksPassword, the upload goes through the host's jump hosts like a
+// normal connection
 func (s *Store) UploadImage(h *Host, data []byte, ext string, batch bool) (string, error) {
 	if _, err := exec.LookPath("ssh"); err != nil {
 		return "", errors.New("ssh not found in PATH")
@@ -69,7 +79,15 @@ func (s *Store) UploadImage(h *Host, data []byte, ext string, batch bool) (strin
 		return "", err
 	}
 	if batch {
-		args = append(args, "-o", "BatchMode=yes")
+		if h.PasswordMode == PasswordAsk {
+			return "", ErrAsksPassword
+		}
+		// BatchMode turns askpass off too, a saved password still goes
+		// through it, the askpass helper refuses any other prompt when
+		// there is no terminal
+		if h.PasswordMode != PasswordSaved {
+			args = append(args, "-o", "BatchMode=yes")
+		}
 	}
 	// The login shell on the server may be fish, so the script runs under sh.
 	args = append(args, "-o", "ConnectTimeout=10", "-T", "--", h.Dest(), "sh -c "+shQuote(script))
@@ -83,7 +101,10 @@ func (s *Store) UploadImage(h *Host, data []byte, ext string, batch bool) (strin
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	cleanup := AttachPasswordAuth(cmd, h)
+	cleanup, err := AttachPasswordAuth(cmd, h)
+	if err != nil {
+		return "", err
+	}
 	defer cleanup()
 	err = cmd.Run()
 	remote := strings.TrimSpace(stdout.String())

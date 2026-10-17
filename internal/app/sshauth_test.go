@@ -1,54 +1,71 @@
-//go:build !windows
-
 package app
 
 import (
-	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 	"testing"
 )
 
-// askpass runs the script AttachPasswordAuth writes, in a new session so it
-// has no terminal to fall back to
-func askpass(t *testing.T, h *Host, prompt string) (string, error) {
-	t.Helper()
-	cmd := exec.Command("true")
-	cleanup := AttachPasswordAuth(cmd, h)
-	defer cleanup()
-	script := ""
-	for _, kv := range cmd.Env {
-		if v, ok := strings.CutPrefix(kv, "SSH_ASKPASS="); ok {
-			script = v
-		}
-	}
-	if script == "" {
-		t.Fatal("no SSH_ASKPASS set")
-	}
-	run := exec.Command(script, prompt)
-	run.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	run.Stdin, _ = os.Open(os.DevNull)
-	out, err := run.Output()
-	return string(out), err
-}
-
-func TestAskpassAnswersOnlyPasswordPrompts(t *testing.T) {
-	h := &Host{Password: "p w'x"}
+func TestPasswordPrompt(t *testing.T) {
 	for _, p := range []string{"u@h's password: ", "(u@h) Password: ", "Password:"} {
-		out, err := askpass(t, h, p)
-		if err != nil || out != "p w'x\n" {
-			t.Errorf("prompt %q: got %q, %v", p, out, err)
+		if !isPasswordPrompt(p) {
+			t.Errorf("%q not taken for a password prompt", p)
 		}
 	}
 	for _, p := range []string{
 		"Are you sure you want to continue connecting (yes/no/[fingerprint])? ",
 		"Enter passphrase for key '/k': ",
 		"Verification code: ",
+		"password: for what? ",
 	} {
-		out, err := askpass(t, h, p)
-		if err == nil || strings.Contains(out, "p w'x") {
-			t.Errorf("prompt %q answered without a terminal: %q, %v", p, out, err)
+		if isPasswordPrompt(p) {
+			t.Errorf("%q taken for a password prompt", p)
 		}
+	}
+}
+
+func TestPasswordSocketAnswersOnce(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	sock, token, stop, err := servePassword(" p w'x ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	if _, err := fetchPassword(sock, "wrong"); err == nil {
+		t.Error("a wrong token got the password")
+	}
+	pw, err := fetchPassword(sock, token)
+	if err != nil || pw != " p w'x " {
+		t.Fatalf("fetchPassword = %q, %v", pw, err)
+	}
+	if _, err := fetchPassword(sock, token); err == nil {
+		t.Error("the password was given twice")
+	}
+}
+
+func TestAttachPasswordAuthEnv(t *testing.T) {
+	useMockKeychain(t)
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	cmd := exec.Command("true")
+	cmd.Env = []string{"SSH_ASKPASS=/old", "SSHR_ASKPASS_TOKEN=old", "KEEP=1"}
+	stop, err := AttachPasswordAuth(cmd, &Host{ID: "a", PasswordMode: PasswordSaved, Password: "pw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	env := strings.Join(cmd.Env, "\n")
+	for _, bad := range []string{"/old", "=old", "pw"} {
+		if strings.Contains(env, bad) {
+			t.Errorf("env has %q:\n%s", bad, env)
+		}
+	}
+	if !strings.Contains(env, "KEEP=1") || !strings.Contains(env, "SSH_ASKPASS_REQUIRE=force") {
+		t.Errorf("env lost a variable:\n%s", env)
+	}
+	cmd = exec.Command("true")
+	stop2, err := AttachPasswordAuth(cmd, &Host{PasswordMode: PasswordAsk})
+	stop2()
+	if err != nil || cmd.Env != nil {
+		t.Errorf("ask mode touched the command: %v %v", cmd.Env, err)
 	}
 }

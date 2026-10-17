@@ -69,11 +69,18 @@ func TestAddRejects(t *testing.T) {
 }
 
 func TestSavedPasswordTriedOnce(t *testing.T) {
-	args := strings.Join(SSHArgs(&Host{Port: 22, Password: "x"}), " ")
+	args := strings.Join(SSHArgs(&Host{Port: 22, PasswordMode: PasswordSaved}), " ")
 	if !strings.Contains(args, "NumberOfPasswordPrompts=1") {
 		t.Errorf("SSHArgs = %q, want NumberOfPasswordPrompts=1", args)
 	}
 	if strings.Contains(strings.Join(SSHArgs(&Host{Port: 22, Key: "/k"}), " "), "NumberOfPasswordPrompts") {
 		t.Error("NumberOfPasswordPrompts set for a key host")
+	}
+}
+
+func TestAskedPasswordRetries(t *testing.T) {
+	args := strings.Join(SSHArgs(&Host{Port: 22, PasswordMode: PasswordAsk}), " ")
+	if strings.Contains(args, "NumberOfPasswordPrompts") || !strings.Contains(args, "keyboard-interactive,password") {
+		t.Errorf("SSHArgs = %q", args)
 	}
 }

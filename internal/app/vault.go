@@ -1,0 +1,216 @@
+package app
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/zalando/go-keyring"
+	"golang.org/x/crypto/chacha20poly1305"
+)
+
+// The vault key encrypts saved passwords and keys inside host files, it is
+// 32 random bytes kept in the system keychain (Secret Service on Linux,
+// Keychain on macOS, Credential Manager on Windows), never on disk
+const (
+	keyringService = "sshr"
+	keyringUser    = "vault-key"
+	sealPrefix     = "v1:"
+)
+
+// keyringTimeout bounds every keychain call, a locked Secret Service
+// collection waits for an unlock prompt with no timeout of its own, over ssh
+// or with no desktop nobody answers it
+const keyringTimeout = 5 * time.Second
+
+// ErrNoKeychain means there is no system keychain to keep the vault key in,
+// saved passwords and keys are unavailable then, asking for the password
+// and key files still work
+var ErrNoKeychain = errors.New("no_keychain")
+
+// KeychainError carries why the keychain could not be used
+type KeychainError struct{ Err error }
+
+func (e *KeychainError) Error() string {
+	return "the system keychain is not available (" + e.Err.Error() + "), saved passwords need it, ask for the password each time or use a key file"
+}
+
+func (e *KeychainError) Unwrap() []error { return []error{ErrNoKeychain, e.Err} }
+
+var (
+	vaultMu  sync.Mutex
+	vaultKey []byte
+	// vaultLockPath is where the lock against two processes creating the
+	// vault key at once lives, tests point it elsewhere
+	vaultLockPath = func() (string, error) {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		dir := filepath.Join(home, ".sshr", "vault")
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return "", err
+		}
+		return filepath.Join(dir, ".lock"), nil
+	}
+)
+
+// keyringCall runs f with keyringTimeout, the goroutine of a call that
+// timed out is left behind, it is blocked on D-Bus and holds nothing
+func keyringCall(f func() (string, error)) (string, error) {
+	type result struct {
+		v   string
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		v, err := f()
+		ch <- result{v, err}
+	}()
+	select {
+	case r := <-ch:
+		return r.v, r.err
+	case <-time.After(keyringTimeout):
+		return "", errors.New("no answer from the keychain, is it locked?")
+	}
+}
+
+func getVaultKey() ([]byte, bool, error) {
+	v, err := keyringCall(func() (string, error) { return keyring.Get(keyringService, keyringUser) })
+	if errors.Is(err, keyring.ErrNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, &KeychainError{err}
+	}
+	key, err := base64.StdEncoding.DecodeString(v)
+	if err != nil || len(key) != chacha20poly1305.KeySize {
+		return nil, false, &KeychainError{errors.New("the vault key in the keychain is damaged")}
+	}
+	return key, true, nil
+}
+
+// VaultKey returns the vault key, creating it on first use, the keychain is
+// read once per process
+func VaultKey() ([]byte, error) {
+	vaultMu.Lock()
+	defer vaultMu.Unlock()
+	if vaultKey != nil {
+		return vaultKey, nil
+	}
+	key, ok, err := getVaultKey()
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		if key, err = createVaultKey(); err != nil {
+			return nil, err
+		}
+	}
+	vaultKey = key
+	return key, nil
+}
+
+// createVaultKey makes the vault key under a file lock, two processes
+// starting at once would otherwise each store their own key and the
+// secrets sealed with the losing one could not be opened again
+func createVaultKey() ([]byte, error) {
+	path, err := vaultLockPath()
+	if err != nil {
+		return nil, err
+	}
+	unlock, err := lockFile(path)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	if key, ok, err := getVaultKey(); err != nil || ok {
+		return key, err
+	}
+	key := make([]byte, chacha20poly1305.KeySize)
+	if _, err := rand.Read(key); err != nil {
+		return nil, err
+	}
+	enc := base64.StdEncoding.EncodeToString(key)
+	if _, err := keyringCall(func() (string, error) {
+		return "", keyring.Set(keyringService, keyringUser, enc)
+	}); err != nil {
+		return nil, &KeychainError{err}
+	}
+	// read back what the keychain holds, that is the key every other process
+	// will get
+	key, ok, err := getVaultKey()
+	if err == nil && !ok {
+		err = &KeychainError{errors.New("the vault key was not kept")}
+	}
+	return key, err
+}
+
+// sealAAD ties a sealed value to its host and field, so a value copied into
+// another host or field does not open
+func sealAAD(hostID, field string) []byte {
+	return []byte("sshr\x00" + hostID + "\x00" + field)
+}
+
+// seal encrypts plain with XChaCha20-Poly1305 under the vault key
+func seal(plain []byte, hostID, field string) (string, error) {
+	key, err := VaultKey()
+	if err != nil {
+		return "", err
+	}
+	aead, err := chacha20poly1305.NewX(key)
+	if err != nil {
+		return "", err
+	}
+	nonce := make([]byte, aead.NonceSize(), aead.NonceSize()+len(plain)+aead.Overhead())
+	if _, err := rand.Read(nonce); err != nil {
+		return "", err
+	}
+	out := aead.Seal(nonce, nonce, plain, sealAAD(hostID, field))
+	return sealPrefix + base64.StdEncoding.EncodeToString(out), nil
+}
+
+// ErrSealBroken means a saved secret does not open with the vault key, the
+// keychain was reset or the host file was copied from another machine
+var ErrSealBroken = errors.New("sealed_broken")
+
+// unseal opens a value made by seal
+func unseal(blob, hostID, field string) ([]byte, error) {
+	raw, ok := strings.CutPrefix(blob, sealPrefix)
+	if !ok {
+		return nil, fmt.Errorf("%w: unknown format", ErrSealBroken)
+	}
+	data, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrSealBroken, err)
+	}
+	key, err := VaultKey()
+	if err != nil {
+		return nil, err
+	}
+	aead, err := chacha20poly1305.NewX(key)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) < aead.NonceSize() {
+		return nil, fmt.Errorf("%w: too short", ErrSealBroken)
+	}
+	plain, err := aead.Open(nil, data[:aead.NonceSize()], data[aead.NonceSize():], sealAAD(hostID, field))
+	if err != nil {
+		return nil, ErrSealBroken
+	}
+	return plain, nil
+}
+
+// CheckKeychain tells whether saved secrets can be used here, it creates
+// the vault key if there is none yet
+func CheckKeychain() error {
+	_, err := VaultKey()
+	return err
+}

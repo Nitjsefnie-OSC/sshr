@@ -114,6 +114,29 @@ sshr close web                # end the shared connection now
 - if your ssh config already sets `ControlMaster` for the host, sshr leaves it to your config
 - the socket path has a length limit (about 104 bytes), if no directory is short enough sshr says so and connects without reuse
 
+## Passwords
+
+Every host with a password has one of two modes:
+
+- **saved** (Save in sshr, `sshr add --no-key`), the password is encrypted in the host file with XChaCha20-Poly1305, the vault key is 32 random bytes kept in the system keychain (Secret Service on Linux, Keychain on macOS, Credential Manager on Windows), not on disk
+- **ask** (Ask every time, `sshr add --ask-password`), nothing is stored, ssh asks on the terminal on every connect
+
+```sh
+sshr add db.example.com -u admin --no-key          # asks for the password once, saves it encrypted
+sshr add db.example.com -u admin --ask-password    # ssh asks every time
+```
+
+How a saved password reaches ssh:
+
+- ssh runs sshr itself as `SSH_ASKPASS`, the helper gets the password over a unix socket that sshr serves in a 0700 directory for this one connection, the password is never written to a file, put in the environment or on the command line
+- the socket answers once, a wrong password is not retried (`NumberOfPasswordPrompts=1`), three failures in a row are enough for fail2ban
+- only a password prompt gets the password, the host key question, key passphrases and one-time codes are asked on the terminal
+- `sshr list` and the host form never decrypt anything, the form shows an empty field, leave it empty to keep the saved password
+- with no keychain (a server without a desktop, a locked keyring that nobody answers within 5 s) a saved password cannot be added, sshr says so, ask mode and key files keep working
+- hosts saved by older versions with a plain `"password"` field keep working, the password is encrypted on the next save that can reach the keychain
+- an older sshr that edits a host drops the encrypted password, the host then needs the password again
+- if the keychain is reset or `~/.sshr` is copied to another machine, a saved password no longer opens, sshr asks to save it again
+
 ## Sending images to a server
 
 Pasting a screenshot into a remote session gives the server a path on *your* disk, which it cannot open. Remote Claude Code, an editor or a script just gets a useless string. sshr uploads the image to the host instead and gives you the path on the server.
@@ -131,7 +154,7 @@ How it works:
 - a separate `ssh` with the host's saved key and port writes the file to `~/.cache/sshr/pasted/` on the server and prints its path;
 - the file is removed after 15 minutes by a detached `sleep`, and every upload also deletes older leftovers, in case that `sleep` was killed by a logout;
 - the server needs only `sh`; the command runs under `sh -c`, so a fish or zsh login shell is fine;
-- the CLI can ask for a password on the terminal. The app has no terminal, so it uses `BatchMode` and works only with a key or ssh-agent;
+- the CLI can ask for a password on the terminal, the app has no terminal, so it uses `BatchMode` and works with a key, ssh-agent or a saved password, a host in ask mode tells you to use `sshr paste`
 - `-c` is opt-in because it replaces the image in your clipboard with the path.
 
 Reading the clipboard uses tools the OS already has, so the binary needs no cgo:
@@ -157,7 +180,7 @@ In the order we intend to build them (reasons in [docs/WHY.md](docs/WHY.md)):
    - connection reuse with `ControlMaster`/`ControlPersist`, off by default - done ([#22](https://github.com/klovbin/sshr/issues/22)),
    - sending clipboard images to the server — done ([#26](https://github.com/klovbin/sshr/issues/26));
    - mosh, off by default — done ([#23](https://github.com/klovbin/sshr/issues/23)).
-3. Password handling: local secrets, then encrypted vault ([#15](https://github.com/klovbin/sshr/issues/15))
+3. Password handling: saved encrypted with a key from the system keychain or asked every time - done ([#6](https://github.com/klovbin/sshr/issues/6)), keys stored inside sshr ([#12](https://github.com/klovbin/sshr/issues/12))
 4. Cross-platform installer with OS auto-detection and PATH setup ([#11](https://github.com/klovbin/sshr/issues/11))
 5. Sync with key services: 1Password, Bitwarden, ssh-agent ([#14](https://github.com/klovbin/sshr/issues/14))
 6. REST API ([#12](https://github.com/klovbin/sshr/issues/12)) and MCP server ([#13](https://github.com/klovbin/sshr/issues/13)) for integrations and AI assistants
