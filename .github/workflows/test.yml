@@ -28,7 +28,7 @@ jobs:
       - name: tests
         env:
           CGO_ENABLED: "0"
-        run: go test $(go list ./... | grep -v /internal/ui)
+        run: go test -tags nocgo $(go list -tags nocgo ./... | grep -v /internal/ui)
 
       - name: build the CLI
         env:
