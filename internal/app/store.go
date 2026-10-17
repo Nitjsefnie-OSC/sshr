@@ -67,6 +67,9 @@ type Host struct {
 // Store persists hosts as ~/.sshr/vault/hosts/<id>.json (0600).
 type Store struct {
 	Dir string
+	// Reuse overrides the "reuse" setting for this run, nil means the
+	// setting decides
+	Reuse *bool
 }
 
 // DefaultStore creates ~/.sshr/vault/hosts if needed.

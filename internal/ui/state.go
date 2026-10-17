@@ -76,6 +76,7 @@ type state struct {
 	langDropBtn widget.Clickable
 	langOpen    bool
 	moshBox     widget.Bool
+	reuseBox    widget.Bool
 	list        widget.List
 	hostDelBtns  []widget.Clickable // parallel to hosts
 	hostEditBtns []widget.Clickable // parallel to hosts
@@ -197,6 +198,10 @@ func (s *state) handle(gtx layout.Context) {
 	}
 	if s.moshBox.Update(gtx) {
 		s.settings.Mosh = s.moshBox.Value
+		_ = sshrapp.SaveSettings(s.settings)
+	}
+	if s.reuseBox.Update(gtx) {
+		s.settings.Reuse = s.reuseBox.Value
 		_ = sshrapp.SaveSettings(s.settings)
 	}
 	for i := range s.langBtns {

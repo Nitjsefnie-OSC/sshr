@@ -53,6 +53,8 @@ var en = map[string]string{
 	"settings.language": "Interface language",
 	"settings.connection": "Connection",
 	"settings.mosh":       "Connect with mosh",
+	"settings.reuse":      "Reuse connections",
+	"settings.reuse.hint": "A second window, image upload or tunnel to the same host opens at once, without a new login, the shared connection stays up 10 minutes after the last session. If it drops, every session on it drops too, a password is not asked again while it is up, sshr close <host> ends it. Ignored when your ssh config already sets ControlMaster, not available on Windows",
 	"settings.mosh.hint":  "Keeps the session alive when the network changes or the laptop sleeps, and shows typing instantly on a slow link. Needs mosh on this computer and mosh-server plus open UDP 60000–61000 on the server. No port forwarding, no scrollback without tmux, no terminal images, not on Windows. If mosh fails to start, sshr falls back to plain ssh.",
 
 	"sidebar.hosts.title": "Servers",

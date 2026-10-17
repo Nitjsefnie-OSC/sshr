@@ -13,6 +13,12 @@ type Settings struct {
 	// needs mosh-server and open UDP ports on the server, drops port/agent
 	// forwarding and terminal images, and does not run natively on Windows.
 	Mosh bool `json:"mosh"`
+	// Reuse makes sessions to the same host share one connection
+	// (ControlMaster), the second one opens at once with no new login, off
+	// by default: one dropped connection drops every session on it, a
+	// password is not asked again while the master is up, and Windows
+	// OpenSSH has no ControlMaster
+	Reuse bool `json:"reuse"`
 }
 
 func settingsPath() (string, error) {

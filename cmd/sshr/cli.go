@@ -24,6 +24,24 @@ func runCLI(args []string) {
 	if err != nil {
 		fatal(err)
 	}
+	// --reuse and --no-reuse work with every command that connects
+	kept := make([]string, 0, len(args))
+	for _, a := range args {
+		switch a {
+		case "--reuse", "--no-reuse":
+			on := a == "--reuse"
+			store.Reuse = &on
+			// jump hops run as separate sshr processes and read this
+			os.Setenv("SSHR_REUSE", strconv.FormatBool(on))
+		default:
+			kept = append(kept, a)
+		}
+	}
+	args = kept
+	if len(args) == 0 {
+		printUsage()
+		os.Exit(1)
+	}
 
 	switch args[0] {
 	case "list", "ls":
@@ -40,6 +58,16 @@ func runCLI(args []string) {
 		cmdForward(store, args[1:])
 	case "tunnel":
 		cmdTunnel(store, args[1:])
+	case "close":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: sshr close <name or id>")
+			os.Exit(1)
+		}
+		h := findHost(store, "close", strings.Join(args[1:], " "))
+		if err := store.CloseMaster(h); err != nil {
+			fatal(err)
+		}
+		fmt.Printf("Closed the shared connection to %s\n", h.Name)
 	case app.ProxyCommandName:
 		cmdProxy(store, args[1:])
 	case "help", "--help", "-h":
@@ -403,12 +431,17 @@ Usage:
   sshr forward rm <host> <name>     remove a forward
   sshr tunnel <host> [names...]     open forwards without a shell
                                     (all when no names), Ctrl+C closes
+  sshr close <name or id>           close the shared connection to a host
   sshr paste [-c] [-f <file>] <name or id>
                                     upload the clipboard image (or a file)
                                     to the host and print its path there;
                                     -c also copies that path; removed from
                                     the server after 15 minutes
-  sshr help                         show this help`)
+  sshr help                         show this help
+
+  --reuse / --no-reuse              with any command that connects: share
+                                    one connection per host (ControlMaster)
+                                    or not, overriding the setting`)
 }
 
 func promptAuthMethod() (key, password string) {

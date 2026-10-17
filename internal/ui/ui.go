@@ -70,6 +70,7 @@ func loop(w *app.Window) error {
 		win:        w,
 	}
 	s.moshBox.Value = settings.Mosh
+	s.reuseBox.Value = settings.Reuse
 	s.nameEd.SingleLine = true
 	s.hostEd.SingleLine = true
 	s.userEd.SingleLine = true

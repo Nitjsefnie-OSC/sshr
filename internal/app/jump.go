@@ -124,7 +124,8 @@ func (s *Store) ConnectArgs(h *Host) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return append(SSHArgs(h), jump...), nil
+	args := append(SSHArgs(h), s.reuseArgs(h)...)
+	return append(args, jump...), nil
 }
 
 // ProxyHop prepares the ssh command line that ProxyCommand runs to reach

@@ -7,7 +7,7 @@ sshr is a desktop SSH hosts manager that keeps your server list local and under 
 It currently supports:
 
 - Adding and listing SSH hosts (name, host/IP, user, port)
-- CLI commands: `list`, `add`, `rm`, `connect`, `paste`, `forward`, `tunnel`, `help`
+- CLI commands: `list`, `add`, `rm`, `connect`, `paste`, `forward`, `tunnel`, `close`, `help`
 - Private key support (`-k` flag or interactive selection)
 - Auto-discovery of SSH keys in `~/.ssh/`
 - Interactive authentication method prompt when adding hosts; `--no-key` for password hosts in scripts (with no answer on stdin `add` stops instead of guessing)
@@ -19,6 +19,7 @@ It currently supports:
 - Jump hosts per host, including chains (see [Jump hosts](#jump-hosts))
 - Attaching to a tmux or zellij session on connect, off by default (see [Keeping the session on the server](#keeping-the-session-on-the-server))
 - Named port forwards per host, opened with a session or as a tunnel (see [Port forwards](#port-forwards))
+- Optional connection reuse, off by default (see [Reusing connections](#reusing-connections))
 
 ## Connecting with mosh
 
@@ -95,6 +96,24 @@ In the app it is the **Port forwards** field of the host form, one forward per l
 - `sshr tunnel` runs `ssh -N -o ExitOnForwardFailure=yes`, so a port that is already taken stops the tunnel with an error instead of leaving it open and useless
 - forwards go through jump hosts like the session does, mosh carries no forwards, so `-F` switches that connection to ssh
 
+## Reusing connections
+
+With **Settings → Connection → Reuse connections** (`"reuse": true` in `~/.sshr/settings.json`) sessions to the same host share one ssh connection (`ControlMaster`), a second window, `paste` or `tunnel` opens at once without a new login, in a test the second connect took about 0.1 s instead of 0.65 s, it is **off by default**, because:
+
+- if the shared connection drops, every session on it drops too
+- while it is up, a password is not asked again, anyone with your user account can open a session through its socket, so sockets live in a 0700 directory, `$XDG_RUNTIME_DIR/sshr` or `~/.sshr/cm`
+- Windows OpenSSH has no `ControlMaster`, there it does nothing
+
+```sh
+sshr connect --reuse web      # share this time, with any command that connects
+sshr connect --no-reuse web   # a separate connection even if the setting is on
+sshr close web                # end the shared connection now
+```
+
+- the shared connection stays up 10 minutes after the last session (`ControlPersist=10m`)
+- if your ssh config already sets `ControlMaster` for the host, sshr leaves it to your config
+- the socket path has a length limit (about 104 bytes), if no directory is short enough sshr says so and connects without reuse
+
 ## Sending images to a server
 
 Pasting a screenshot into a remote session gives the server a path on *your* disk, which it cannot open. Remote Claude Code, an editor or a script just gets a useless string. sshr uploads the image to the host instead and gives you the path on the server.
@@ -135,7 +154,7 @@ In the order we intend to build them (reasons in [docs/WHY.md](docs/WHY.md)):
    - jump hosts via `ProxyJump` - done ([#19](https://github.com/klovbin/sshr/issues/19)),
    - attach to tmux/zellij on connect - done ([#20](https://github.com/klovbin/sshr/issues/20)),
    - saved port forwards per host - done ([#21](https://github.com/klovbin/sshr/issues/21)),
-   - connection reuse with `ControlMaster`/`ControlPersist` ([#22](https://github.com/klovbin/sshr/issues/22)) — a second session to the same host opens instantly;
+   - connection reuse with `ControlMaster`/`ControlPersist`, off by default - done ([#22](https://github.com/klovbin/sshr/issues/22)),
    - sending clipboard images to the server — done ([#26](https://github.com/klovbin/sshr/issues/26));
    - mosh, off by default — done ([#23](https://github.com/klovbin/sshr/issues/23)).
 3. Password handling: local secrets, then encrypted vault ([#15](https://github.com/klovbin/sshr/issues/15))
