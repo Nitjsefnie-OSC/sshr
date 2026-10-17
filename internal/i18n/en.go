@@ -40,6 +40,8 @@ var en = map[string]string{
 	"field.session":   "On connect open",
 	"field.session.hint": "tmux or zellij keep your work on the server when the connection drops, reconnect and you are back, needs the tool installed on the server",
 	"session.off":     "Plain shell",
+	"field.forwards":  "Port forwards (optional)",
+	"field.forwards.hint": "One per line: name -L port:host:port, -R for the other direction, -D port for SOCKS, open with sshr connect -F name or sshr tunnel",
 	"field.jump.hint": "Go through another server first: a saved host name or user@host:port, several as a,b",
 
 	"auth.password": "Password",

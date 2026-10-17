@@ -7,7 +7,7 @@ sshr is a desktop SSH hosts manager that keeps your server list local and under 
 It currently supports:
 
 - Adding and listing SSH hosts (name, host/IP, user, port)
-- CLI commands: `list`, `add`, `rm`, `connect`, `paste`, `help`
+- CLI commands: `list`, `add`, `rm`, `connect`, `paste`, `forward`, `tunnel`, `help`
 - Private key support (`-k` flag or interactive selection)
 - Auto-discovery of SSH keys in `~/.ssh/`
 - Interactive authentication method prompt when adding hosts; `--no-key` for password hosts in scripts (with no answer on stdin `add` stops instead of guessing)
@@ -18,6 +18,7 @@ It currently supports:
 - Sending a clipboard image to a server, from the CLI and the app (see [Sending images to a server](#sending-images-to-a-server))
 - Jump hosts per host, including chains (see [Jump hosts](#jump-hosts))
 - Attaching to a tmux or zellij session on connect, off by default (see [Keeping the session on the server](#keeping-the-session-on-the-server))
+- Named port forwards per host, opened with a session or as a tunnel (see [Port forwards](#port-forwards))
 
 ## Connecting with mosh
 
@@ -72,6 +73,28 @@ In the app it is **On connect open** in the host form: plain shell, tmux or zell
 - it works over plain ssh on every OS, keeps port forwarding and terminal images working, and through mosh as well
 - a login script that starts its own tmux on the server still runs in the plain shell, sshr does not change it
 
+## Port forwards
+
+A host can keep named forwards, so "open the database" is one command instead of remembering `-L 5432:localhost:5432` every time
+
+```sh
+sshr forward add web db -L 5432:localhost:5432    # local 5432 -> the server's 5432
+sshr forward add web app -R 8080:localhost:3000   # the server's 8080 -> your 3000
+sshr forward add web socks -D 1080                # SOCKS proxy through the server
+sshr forward web                                  # list them
+sshr forward rm web socks
+
+sshr tunnel web db            # only the forward, no shell, Ctrl+C closes it
+sshr tunnel web               # all forwards of the host
+sshr connect -F db web        # a shell with the forward open, -F all for every one
+```
+
+In the app it is the **Port forwards** field of the host form, one forward per line in the same `name -L spec` form
+
+- the spec is what ssh takes after `-L`, `-R` or `-D`, `[bind:]port:host:hostport`, or `[bind:]port` for `-D`, it is checked when you save it
+- `sshr tunnel` runs `ssh -N -o ExitOnForwardFailure=yes`, so a port that is already taken stops the tunnel with an error instead of leaving it open and useless
+- forwards go through jump hosts like the session does, mosh carries no forwards, so `-F` switches that connection to ssh
+
 ## Sending images to a server
 
 Pasting a screenshot into a remote session gives the server a path on *your* disk, which it cannot open. Remote Claude Code, an editor or a script just gets a useless string. sshr uploads the image to the host instead and gives you the path on the server.
@@ -111,7 +134,7 @@ In the order we intend to build them (reasons in [docs/WHY.md](docs/WHY.md)):
 2. Connect / session workflows on top of system SSH ([#16](https://github.com/klovbin/sshr/issues/16)):
    - jump hosts via `ProxyJump` - done ([#19](https://github.com/klovbin/sshr/issues/19)),
    - attach to tmux/zellij on connect - done ([#20](https://github.com/klovbin/sshr/issues/20)),
-   - saved port forwards per host ([#21](https://github.com/klovbin/sshr/issues/21)) — "open DB", "open admin panel" in one click;
+   - saved port forwards per host - done ([#21](https://github.com/klovbin/sshr/issues/21)),
    - connection reuse with `ControlMaster`/`ControlPersist` ([#22](https://github.com/klovbin/sshr/issues/22)) — a second session to the same host opens instantly;
    - sending clipboard images to the server — done ([#26](https://github.com/klovbin/sshr/issues/26));
    - mosh, off by default — done ([#23](https://github.com/klovbin/sshr/issues/23)).

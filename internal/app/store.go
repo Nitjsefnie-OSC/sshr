@@ -57,7 +57,10 @@ type Host struct {
 	Jump string `json:"jump,omitempty"`
 	// Session is "tmux" or "zellij" to attach to a remote session named
 	// SessionName on connect, empty means a plain shell
-	Session   string    `json:"session,omitempty"`
+	Session string `json:"session,omitempty"`
+	// Forwards are named port forwards, started with connect -F or as a
+	// tunnel with sshr tunnel
+	Forwards  []Forward `json:"forwards,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -129,6 +132,9 @@ func cleanHost(h Host) (Host, error) {
 	}
 	h.Session = strings.TrimSpace(h.Session)
 	if err := checkSession(h.Session); err != nil {
+		return h, err
+	}
+	if err := checkForwards(h.Forwards); err != nil {
 		return h, err
 	}
 	return h, nil

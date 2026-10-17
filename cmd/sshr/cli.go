@@ -36,6 +36,10 @@ func runCLI(args []string) {
 		cmdConnect(store, args[1:])
 	case "paste":
 		cmdPaste(store, args[1:])
+	case "forward", "fwd":
+		cmdForward(store, args[1:])
+	case "tunnel":
+		cmdTunnel(store, args[1:])
 	case app.ProxyCommandName:
 		cmdProxy(store, args[1:])
 	case "help", "--help", "-h":
@@ -197,9 +201,16 @@ func cmdConnect(store *app.Store, args []string) {
 	settings, _ := app.LoadSettings()
 	useMosh := settings.Mosh
 	plain := false
+	var fwdNames []string
 	rest := make([]string, 0, len(args))
-	for _, a := range args {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		switch a {
+		case "-F", "--forward":
+			if i+1 < len(args) {
+				i++
+				fwdNames = append(fwdNames, args[i])
+			}
 		case "--mosh":
 			useMosh = true
 		case "--ssh":
@@ -211,7 +222,7 @@ func cmdConnect(store *app.Store, args []string) {
 		}
 	}
 	if len(rest) < 1 {
-		fmt.Fprintln(os.Stderr, "Usage: sshr connect [--mosh|--ssh] [--plain] <name or id>")
+		fmt.Fprintln(os.Stderr, "Usage: sshr connect [--mosh|--ssh] [--plain] [-F <forward>|all] <name or id>")
 		os.Exit(1)
 	}
 	query := strings.Join(rest, " ")
@@ -224,6 +235,20 @@ func cmdConnect(store *app.Store, args []string) {
 		fatal(err)
 	}
 	dest := h.Dest()
+	if len(fwdNames) > 0 {
+		fs, err := app.FindForwards(h.Forwards, fwdNames)
+		if err != nil {
+			fatal(err)
+		}
+		// mosh carries no port forwards at all
+		if useMosh {
+			fmt.Fprintln(os.Stderr, "sshr: mosh cannot forward ports, using ssh")
+			useMosh = false
+		}
+		for _, f := range fs {
+			sshOpts = append(sshOpts, f.Args()...)
+		}
+	}
 	session := h.Session
 	if plain {
 		session = ""
@@ -366,10 +391,18 @@ Usage:
                                     --session attaches to tmux/zellij
                                     on connect (off by default)
   sshr rm <name or id>              remove a host
-  sshr connect [--mosh|--ssh] [--plain] <name or id>
+  sshr connect [--mosh|--ssh] [--plain] [-F <forward>|all] <name or id>
                                     ssh into a host (mosh if enabled
                                     in settings or with --mosh),
-                                    --plain skips the host's session
+                                    --plain skips the host's session,
+                                    -F also opens saved forwards
+  sshr forward <host>               list saved port forwards
+  sshr forward add <host> <name> -L|-R|-D <spec>
+                                    save a forward, e.g.
+                                    db -L 5432:localhost:5432
+  sshr forward rm <host> <name>     remove a forward
+  sshr tunnel <host> [names...]     open forwards without a shell
+                                    (all when no names), Ctrl+C closes
   sshr paste [-c] [-f <file>] <name or id>
                                     upload the clipboard image (or a file)
                                     to the host and print its path there;

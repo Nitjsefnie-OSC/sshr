@@ -124,6 +124,13 @@ func layoutForm(gtx layout.Context, th *material.Theme, s *state) layout.Dimensi
 		spacer(12),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return layoutSessionPicker(gtx, th, s)
+		}),
+		spacer(12),
+		field(th, s.t("field.forwards"), &s.fwdEd),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			hint := material.Caption(th, s.t("field.forwards.hint"))
+			hint.Color = colMuted
+			return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, hint.Layout)
 		}))
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 }

@@ -56,6 +56,7 @@ type state struct {
 	keyEd       widget.Editor
 	passEd      widget.Editor
 	jumpEd      widget.Editor
+	fwdEd       widget.Editor // one forward per line, "db -L 5432:localhost:5432"
 	authKind    authKind
 	authPassBtn widget.Clickable
 	authKeyBtn  widget.Clickable
@@ -279,6 +280,7 @@ func (s *state) clearForm() {
 	s.passEd.SetText("")
 	s.passEd.Mask = '•'
 	s.jumpEd.SetText("")
+	s.fwdEd.SetText("")
 	s.session = ""
 	s.authKind = authPassword
 	s.form.editID = ""
@@ -329,10 +331,12 @@ func (s *state) saveHost() {
 			return
 		}
 	}
-	var (
-		h   *sshrapp.Host
-		err error
-	)
+	forwards, err := sshrapp.ParseForwards(s.fwdEd.Text())
+	if err != nil {
+		s.form.err = err.Error()
+		return
+	}
+	var h *sshrapp.Host
 	in := sshrapp.Host{
 		Name:     s.nameEd.Text(),
 		Host:     s.hostEd.Text(),
@@ -342,6 +346,7 @@ func (s *state) saveHost() {
 		Password: password,
 		Jump:     s.jumpEd.Text(),
 		Session:  s.session,
+		Forwards: forwards,
 	}
 	if s.form.editID != "" {
 		h, err = s.store.Update(s.form.editID, in)
