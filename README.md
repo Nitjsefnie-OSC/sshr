@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/icons/sshr-256.png" width="128" height="128" alt="sshr logo"></p>
+
 # sshr
 
 ## About
@@ -35,7 +37,9 @@ or `sh install.sh` from a checkout, options in `sh install.sh --help`
 - a release binary `sshr_<os>_<arch>` is used when the release has one and it matches `sha256sums.txt`, a binary without a checksum is not installed
 - otherwise sshr is built from source, from the checkout the script runs in or from a fresh clone, it needs Go 1.21 or newer (go fetches the toolchain named in `go.mod` itself), the GUI also needs a C compiler and, on Linux, Wayland/X11 and Vulkan headers, without them the CLI is built and the script says so, `--cli-only` skips the GUI
 - if the directory is not in `PATH`, one line marked `# added by the sshr installer` goes to the startup file of your shell (`~/.bashrc`, `~/.bash_profile` on macOS, `~/.zshrc`, `~/.config/fish/conf.d/sshr.fish` or `~/.profile`), `--no-modify-path` leaves them alone
-- `--uninstall` removes the binary and that line, hosts in `~/.sshr` stay
+- on Linux, when the GUI is installed, sshr goes to the application menu: `sshr.desktop` in `~/.local/share/applications` and the icon in `~/.local/share/icons/hicolor`, the window gets the same icon, its app id is the binary name `sshr`
+- `--uninstall` removes the binary, the menu entry, the icons and the PATH line, hosts in `~/.sshr` stay
+- the logo in every size is in `assets/icons`, the Windows `.exe` icon and a macOS app bundle are not made yet
 
 Packages for AUR, Homebrew, Scoop and nixpkgs are planned ([#17](https://github.com/klovbin/sshr/issues/17)), on Windows build with `go build -o sshr.exe ./cmd/sshr` for now
 
