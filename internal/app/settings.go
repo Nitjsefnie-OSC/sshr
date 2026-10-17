@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 // Settings is ~/.sshr/settings.json (language, etc.).
@@ -31,6 +32,25 @@ type Settings struct {
 	// APICommands enables POST /v1/hosts/{host}/run in sshr serve, off by
 	// default for the same reason as MCPCommands
 	APICommands bool `json:"api_commands,omitempty"`
+	// HealthCheck makes the app check every host now and then and show
+	// whether it answers, off by default: each check is a connection the
+	// server logs as closed before login, fail2ban counts them in its
+	// ddos and aggressive modes, and the checks go out from this machine on their own
+	HealthCheck bool `json:"health_check,omitempty"`
+	// HealthInterval is the seconds between checks, 0 means 300, less
+	// than 60 is raised to 60
+	HealthInterval int `json:"health_interval,omitempty"`
+}
+
+// HealthEvery is the interval between checks of the hosts
+func (s Settings) HealthEvery() time.Duration {
+	switch {
+	case s.HealthInterval <= 0:
+		return DefaultHealthInterval
+	case s.HealthInterval < 60:
+		return time.Minute
+	}
+	return time.Duration(s.HealthInterval) * time.Second
 }
 
 func settingsPath() (string, error) {

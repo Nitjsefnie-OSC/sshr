@@ -42,11 +42,25 @@ func layoutHostsList(gtx layout.Context, th *material.Theme, s *state) layout.Di
 		return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-					t := material.Body1(th, h.Name)
-					t.Font.Weight = 600
-					t.Color = colFG
-					t.MaxLines = 1
-					return t.Layout(gtx)
+					return layout.Flex{Alignment: layout.Baseline}.Layout(gtx,
+						layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+							t := material.Body1(th, h.Name)
+							t.Font.Weight = 600
+							t.Color = colFG
+							t.MaxLines = 1
+							return t.Layout(gtx)
+						}),
+						layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+							r, ok := s.health[h.ID]
+							if !ok {
+								return layout.Dimensions{}
+							}
+							l := material.Caption(th, "● "+s.healthLabel(r))
+							l.Color = healthColor(r.State)
+							l.MaxLines = 1
+							return layout.Inset{Left: unit.Dp(8)}.Layout(gtx, l.Layout)
+						}),
+					)
 				}),
 				layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 					line := fmt.Sprintf("%s@%s:%d", h.User, h.Host, h.Port)

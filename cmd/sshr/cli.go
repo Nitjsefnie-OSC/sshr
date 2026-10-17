@@ -49,7 +49,9 @@ func runCLI(args []string) {
 
 	switch args[0] {
 	case "list", "ls":
-		cmdList(store)
+		cmdList(store, args[1:])
+	case "ping":
+		cmdPing(store, args[1:])
 	case "add":
 		cmdAdd(store, args[1:])
 	case "rm", "remove":
@@ -93,7 +95,20 @@ func runCLI(args []string) {
 	}
 }
 
-func cmdList(store *app.Store) {
+func cmdList(store *app.Store, args []string) {
+	st, _ := app.LoadSettings()
+	ping := st.HealthCheck
+	for _, a := range args {
+		switch a {
+		case "--ping":
+			ping = true
+		case "--no-ping":
+			ping = false
+		default:
+			fmt.Fprintln(os.Stderr, "Usage: sshr list [--ping|--no-ping]")
+			os.Exit(1)
+		}
+	}
 	hosts, err := store.List()
 	if err != nil {
 		fatal(err)
@@ -102,7 +117,14 @@ func cmdList(store *app.Store) {
 		fmt.Println("No hosts. Use `sshr add` to add one.")
 		return
 	}
+	var health map[string]app.Health
+	if ping {
+		health = app.CheckHealthAll(hosts)
+	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	if ping {
+		fmt.Fprint(w, "STATUS\t")
+	}
 	fmt.Fprintln(w, "NAME\tHOST\tUSER\tPORT\tAUTH\tID")
 	for _, h := range hosts {
 		keyCol := "-"
@@ -125,6 +147,9 @@ func cmdList(store *app.Store) {
 		id := h.ID
 		if len(id) > 8 {
 			id = id[:8]
+		}
+		if ping {
+			fmt.Fprint(w, health[h.ID].Label()+"\t")
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\n", h.Name, h.Host, h.User, h.Port, keyCol, id)
 	}
@@ -543,7 +568,12 @@ func printUsage() {
 
 Usage:
   sshr                              open GUI
-  sshr list                         list saved hosts
+  sshr list [--ping|--no-ping]      list saved hosts, --ping adds whether
+                                    each answers (on by default with the
+                                    health_check setting)
+  sshr ping [name or id...]         check whether hosts answer: TCP connect
+                                    time and the SSH banner, no login,
+                                    exits 1 when one is down
   sshr add <host> -u <user> [-n <name>] [-p <port>]
            [-k <key> | --key-stdin | --agent [name] | --no-key | --ask-password]
            [-J <jump>]
@@ -965,4 +995,30 @@ func cmdExportSSHConfig(store *app.Store, args []string) {
 	if mode == "--install" {
 		fmt.Printf("Wrote %s, ssh reads it from ~/.ssh/config, it is kept up to date\n", store.SSHConfigOut)
 	}
+}
+
+// cmdPing checks the given hosts, all when none is given
+func cmdPing(store *app.Store, args []string) {
+	var hosts []app.Host
+	if len(args) == 0 {
+		var err error
+		if hosts, err = store.List(); err != nil {
+			fatal(err)
+		}
+	}
+	for _, a := range args {
+		hosts = append(hosts, *findHost(store, "ping", a))
+	}
+	res := app.CheckHealthAll(hosts)
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	code := 0
+	for _, h := range hosts {
+		r := res[h.ID]
+		if r.State == app.HealthDown || r.State == app.HealthNotSSH {
+			code = 1
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\n", h.Name, r.Label(), r.Reason)
+	}
+	w.Flush()
+	os.Exit(code)
 }

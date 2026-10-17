@@ -165,6 +165,24 @@ sshr close web                # end the shared connection now
 - if your ssh config already sets `ControlMaster` for the host, sshr leaves it to your config
 - the socket path has a length limit (about 104 bytes), if no directory is short enough sshr says so and connects without reuse
 
+## Is the host up
+
+```sh
+sshr ping                 # check every host, exits 1 when one is down
+sshr ping web db          # only these
+sshr list --ping          # the list with a STATUS column
+```
+
+With **Settings → Connection → Show whether hosts answer** (`"health_check": true`) the app shows a dot next to each host name, green with the round trip in ms, red when it is down, orange when the port answers but is not ssh, gray `?` when it cannot be checked from here, `sshr list` adds the column too (`--no-ping` turns it off for one run), it is **off by default**, because:
+
+- each check connects to the ssh port and reads the banner, no login is tried, but sshd logs it as a connection closed before authentication, fail2ban counts those in `mode = ddos` and `mode = aggressive` (not in the default `normal`) and may ban your address
+- the checks go out from your machine on their own, every 5 minutes by default (`"health_interval": 300` in seconds, 60 at least) and right after a host is added or changed
+
+How it checks:
+
+- the time shown is the TCP connect, one round trip, a host counts as up only when the SSH banner arrives within 3 s
+- a host behind a jump host is not checked, a direct connection says nothing about the path ssh takes, a host saved as an alias of ssh config (`ProxyCommand`) that does not resolve is shown as unknown, not down
+
 ## Passwords
 
 Every host with a password has one of two modes:

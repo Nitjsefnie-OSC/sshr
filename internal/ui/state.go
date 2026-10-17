@@ -97,6 +97,7 @@ type state struct {
 	langOpen     bool
 	moshBox      widget.Bool
 	reuseBox     widget.Bool
+	healthBox    widget.Bool
 	list         widget.List
 	hostDelBtns  []widget.Clickable // parallel to hosts
 	hostEditBtns []widget.Clickable // parallel to hosts
@@ -117,6 +118,13 @@ type state struct {
 
 	status string // soft status line under the title
 	err    string // list-level error (form errors live in form.err)
+
+	// health holds the last check of each host by ID, nil while checks
+	// are off or the first one runs
+	health     map[string]sshrapp.Health
+	healthRes  chan map[string]sshrapp.Health
+	healthStop chan struct{}
+	healthKick chan struct{}
 }
 
 // splitDrag tracks sidebar resize via window-X pointer events.
@@ -136,6 +144,7 @@ func (s *state) reload() {
 		return
 	}
 	s.hosts = hosts
+	s.kickHealth()
 	if len(s.hostDelBtns) != len(hosts) {
 		s.hostDelBtns = make([]widget.Clickable, len(hosts))
 		s.hostEditBtns = make([]widget.Clickable, len(hosts))
@@ -246,6 +255,12 @@ func (s *state) handle(gtx layout.Context) {
 		s.settings.Reuse = s.reuseBox.Value
 		_ = sshrapp.SaveSettings(s.settings)
 	}
+	if s.healthBox.Update(gtx) {
+		s.settings.HealthCheck = s.healthBox.Value
+		_ = sshrapp.SaveSettings(s.settings)
+		s.setHealth(s.healthBox.Value)
+	}
+	s.finishHealth()
 	for i := range s.langBtns {
 		if s.langBtns[i].Clicked(gtx) {
 			s.setLang(i18n.Languages()[i].Code)

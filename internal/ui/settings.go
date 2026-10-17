@@ -113,6 +113,19 @@ func layoutConnectionSection(gtx layout.Context, th *material.Theme, s *state) l
 			l.Color = colMuted
 			return l.Layout(gtx)
 		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			cb := material.CheckBox(th, &s.healthBox, s.t("settings.health"))
+			cb.Color = colFG
+			cb.IconColor = colAccent
+			return cb.Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			l := material.Caption(th, s.t("settings.health.hint"))
+			l.Color = colMuted
+			return l.Layout(gtx)
+		}),
 	)
 }
 
