@@ -608,7 +608,9 @@ Usage:
                                     copy files and folders with scp and
                                     the host's own key, password and
                                     jump hosts, send goes to the home
-                                    folder, get to the current one
+                                    folder, get to the current one,
+                                    --legacy uses the old scp protocol
+                                    for servers without SFTP
   sshr run [-t <tag>]... [-j N] [--timeout S] [name...] -- <command>
                                     run a command on several hosts at
                                     once, by name and by tag (all tags),

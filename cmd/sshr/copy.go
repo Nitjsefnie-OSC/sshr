@@ -12,16 +12,19 @@ import (
 // cmdCopy is sshr send and sshr get, scp with the host's own login
 func cmdCopy(store *app.Store, send bool, args []string) {
 	name := "get"
-	usage := "Usage: sshr get <name or id> <remote path>... [--to <local folder>]"
+	usage := "Usage: sshr get [--legacy] <name or id> <remote path>... [--to <local folder>]"
 	dest := "."
 	if send {
 		name = "send"
-		usage = "Usage: sshr send <name or id> <local path>... [--to <remote folder>]"
+		usage = "Usage: sshr send [--legacy] <name or id> <local path>... [--to <remote folder>]"
 		dest = ""
 	}
 	var rest []string
+	legacy := false
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; {
+		case a == "--legacy" || a == "-O":
+			legacy = true
 		case a == "--to" && i+1 < len(args):
 			i++
 			dest = args[i]
@@ -48,9 +51,14 @@ func cmdCopy(store *app.Store, send bool, args []string) {
 	if err != nil {
 		fatal(fmt.Errorf("scp not found in PATH, it comes with OpenSSH"))
 	}
-	scpArgs, err := store.CopyArgs(h, send, sources, dest)
+	scpArgs, err := store.CopyArgs(h, send, legacy, sources, dest)
 	if err != nil {
 		fatal(err)
 	}
-	os.Exit(run(h, scp, scpArgs...))
+	code := run(h, scp, scpArgs...)
+	if code != 0 && !legacy {
+		// scp only says "Connection closed" when the server has no SFTP
+		fmt.Fprintf(os.Stderr, "sshr: if %s has no SFTP subsystem, try again with --legacy (scp -O)\n", h.Name)
+	}
+	os.Exit(code)
 }

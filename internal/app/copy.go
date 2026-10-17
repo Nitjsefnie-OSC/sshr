@@ -8,8 +8,9 @@ import (
 // CopyArgs builds the scp command line that copies files to h (send) or
 // from it, with the same key, agent, password, jump hosts and shared
 // connection as ssh, scp takes the port as -P, -p there keeps file times,
-// -r is always given, so folders copy too
-func (s *Store) CopyArgs(h *Host, send bool, sources []string, dest string) ([]string, error) {
+// -r is always given, so folders copy too, legacy uses the old scp
+// protocol (-O), which needs no SFTP subsystem on the server
+func (s *Store) CopyArgs(h *Host, send, legacy bool, sources []string, dest string) ([]string, error) {
 	if len(sources) == 0 {
 		return nil, errors.New("nothing to copy")
 	}
@@ -25,6 +26,9 @@ func (s *Store) CopyArgs(h *Host, send bool, sources []string, dest string) ([]s
 			continue
 		}
 		args = append(args, conn[i])
+	}
+	if legacy {
+		args = append(args, "-O")
 	}
 	args = append(args, "-r", "--")
 	if send {

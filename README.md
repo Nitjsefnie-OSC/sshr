@@ -49,7 +49,7 @@ sshr send web report.pdf logs/ --to /srv/in   # to the home folder without --to
 sshr get web /var/log/nginx --to ./logs       # to the current folder without --to
 ```
 
-scp with the host's own key, password, jump hosts and shared connection, folders copy whole
+scp with the host's own key, password, jump hosts and shared connection, folders copy whole, `--legacy` for servers without SFTP
 
 ## Running a command on many hosts
 

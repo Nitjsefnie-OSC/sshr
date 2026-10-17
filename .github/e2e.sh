@@ -27,6 +27,7 @@ PasswordAuthentication yes
 KbdInteractiveAuthentication yes
 UsePAM yes
 AuthorizedKeysFile .ssh/authorized_keys
+Subsystem sftp internal-sftp
 EOF
 
 case "$(uname -s)" in
@@ -42,7 +43,7 @@ Darwin)
 	;;
 esac
 sudo /usr/sbin/sshd -f "$w/sshd_config" -E "$w/sshd.log"
-trap 'sudo kill "$(cat "$w/sshd.pid")" || true; cat "$w/sshd.log" || true' EXIT
+trap 'sudo kill "$(cat "$w/sshd.pid")" || true; sudo cat "$w/sshd.log" || true' EXIT
 for _ in 1 2 3 4 5 6 7 8 9 10; do
 	ssh-keyscan -p 2222 127.0.0.1 >"$w/known" 2>/dev/null && [ -s "$w/known" ] && break
 	sleep 1
@@ -81,7 +82,7 @@ echo one >"$w/tree/a.txt"
 echo two >"$w/tree/sub/b.txt"
 "$sshr" send inner "$w/tree" --to /tmp/sshr-e2e-copy </dev/null
 mkdir -p "$w/back"
-"$sshr" get key /tmp/sshr-e2e-copy --to "$w/back" </dev/null
+"$sshr" get --legacy key /tmp/sshr-e2e-copy --to "$w/back" </dev/null
 diff -r "$w/tree" "$w/back/sshr-e2e-copy"
 
 echo "hello from ci" >"$w/up.txt"
