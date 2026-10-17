@@ -80,6 +80,8 @@ func runCLI(args []string) {
 		cmdSync(store, args[1:])
 	case "import-ssh-config":
 		cmdImportSSHConfig(store, args[1:])
+	case "export-ssh-config":
+		cmdExportSSHConfig(store, args[1:])
 	case app.ProxyCommandName:
 		cmdProxy(store, args[1:])
 	case "help", "--help", "-h":
@@ -607,6 +609,14 @@ Usage:
                                     add the hosts of ~/.ssh/config with
                                     keys, agent, jump hosts and forwards,
                                     saved hosts are skipped
+  sshr export-ssh-config [--install|--uninstall]
+                                    print the hosts as ssh config,
+                                    --install writes ~/.sshr/ssh_config,
+                                    includes it from ~/.ssh/config and
+                                    keeps it up to date, so ssh, scp and
+                                    editors reach the hosts by name,
+                                    passwords and keys kept in sshr are
+                                    not exported
   sshr help                         show this help
 
   --reuse / --no-reuse              with any command that connects: share
@@ -904,5 +914,55 @@ func cmdImportSSHConfig(store *app.Store, args []string) {
 		fmt.Printf("%d hosts would be added, nothing was saved (--dry-run)\n", added)
 	} else {
 		fmt.Printf("Added %d hosts\n", added)
+	}
+}
+
+// cmdExportSSHConfig prints the hosts as ssh config or installs the export
+func cmdExportSSHConfig(store *app.Store, args []string) {
+	usage := func() {
+		fmt.Fprintln(os.Stderr, "Usage: sshr export-ssh-config [--install|--uninstall]")
+		os.Exit(1)
+	}
+	if len(args) > 1 {
+		usage()
+	}
+	mode := ""
+	if len(args) == 1 {
+		mode = args[0]
+	}
+	var items []app.ExportItem
+	var err error
+	switch mode {
+	case "":
+		items, err = store.WriteSSHConfig(os.Stdout)
+	case "--install":
+		items, err = store.InstallSSHConfig()
+	case "--uninstall":
+		if err := store.UninstallSSHConfig(); err != nil {
+			fatal(err)
+		}
+		fmt.Println("Removed the export and its Include line")
+		return
+	default:
+		usage()
+	}
+	for _, it := range items {
+		switch {
+		case it.Skipped != "":
+			fmt.Fprintf(os.Stderr, "- %s  %s\n", it.Name, it.Skipped)
+		case it.Note != "":
+			fmt.Fprintf(os.Stderr, "  %s  %s\n", it.Alias, it.Note)
+		}
+	}
+	if errors.Is(err, app.ErrSSHConfigLink) {
+		// the export is written, only the Include line is left to the user
+		fmt.Fprintf(os.Stderr, "sshr: %v\n", strings.TrimPrefix(err.Error(), app.ErrSSHConfigLink.Error()+": "))
+		os.Exit(1)
+	}
+	if err != nil {
+		fatal(err)
+	}
+	if mode == "--install" {
+		fmt.Printf("Wrote %s, ssh reads it from ~/.ssh/config, it is kept up to date\n", store.SSHConfigOut)
 	}
 }

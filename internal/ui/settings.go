@@ -62,6 +62,19 @@ func layoutImportSection(gtx layout.Context, th *material.Theme, s *state) layou
 			l.Color = colMuted
 			return l.Layout(gtx)
 		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(14)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			cb := material.CheckBox(th, &s.exportBox, s.t("settings.export"))
+			cb.Color = colFG
+			cb.IconColor = colAccent
+			return cb.Layout(gtx)
+		}),
+		layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			l := material.Caption(th, s.t("settings.export.hint"))
+			l.Color = colMuted
+			return l.Layout(gtx)
+		}),
 	)
 }
 

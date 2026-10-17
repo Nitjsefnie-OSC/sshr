@@ -120,6 +120,9 @@ type Store struct {
 	Reuse *bool
 	// OPVault overrides the "op_vault" setting for this run
 	OPVault *string
+	// SSHConfigOut is where the hosts are exported for plain ssh, empty
+	// turns the export off, it is rewritten on every change once installed
+	SSHConfigOut string
 }
 
 // DefaultStore creates ~/.sshr/vault/hosts if needed.
@@ -132,7 +135,7 @@ func DefaultStore() (*Store, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	return &Store{Dir: dir}, nil
+	return &Store{Dir: dir, SSHConfigOut: filepath.Join(home, ".sshr", "ssh_config")}, nil
 }
 
 // Add saves a new host, ID and CreatedAt are set here
@@ -344,6 +347,7 @@ func (s *Store) Delete(id string) error {
 		return err
 	}
 	os.Remove(filepath.Join(s.Dir, id+".pub"))
+	s.hostsChanged()
 	return nil
 }
 
@@ -590,7 +594,19 @@ func (s *Store) save(h *Host) error {
 	if err := os.Rename(tmp, path); err != nil {
 		return err
 	}
-	return s.writePub(h)
+	if err := s.writePub(h); err != nil {
+		return err
+	}
+	s.hostsChanged()
+	return nil
+}
+
+// hostsChanged rewrites the ssh config export when it is installed, the
+// host is saved already, a failed export is reported and does not undo it
+func (s *Store) hostsChanged() {
+	if _, err := s.refreshSSHConfig(false); err != nil {
+		fmt.Fprintf(os.Stderr, "sshr: ssh config export: %v\n", err)
+	}
 }
 
 func newID() (string, error) {

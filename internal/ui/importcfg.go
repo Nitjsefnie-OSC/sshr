@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"errors"
 	"strings"
 
 	"gioui.org/layout"
@@ -60,4 +61,37 @@ func (s *state) finishImport(gtx layout.Context) {
 		s.reload()
 	default:
 	}
+}
+
+// setExport installs or removes the export to ~/.ssh/config, it reads only
+// local files and runs in the frame
+func (s *state) setExport(on bool) {
+	s.err = ""
+	if !on {
+		if err := s.store.UninstallSSHConfig(); err != nil {
+			s.err = err.Error()
+			s.exportBox.Value = s.store.SSHConfigExported()
+			return
+		}
+		s.status = s.t("status.exportRemoved")
+		return
+	}
+	items, err := s.store.InstallSSHConfig()
+	var skipped []string
+	for _, it := range items {
+		if it.Skipped != "" {
+			skipped = append(skipped, it.Name+": "+it.Skipped)
+		}
+	}
+	s.exportBox.Value = s.store.SSHConfigExported()
+	if err != nil && !errors.Is(err, sshrapp.ErrSSHConfigLink) {
+		s.err = err.Error()
+		return
+	}
+	s.status = s.t("status.exported", len(items)-len(skipped), len(skipped))
+	if err != nil {
+		// the file is written, ~/.ssh/config is a link and needs the line by hand
+		skipped = append([]string{strings.TrimPrefix(err.Error(), sshrapp.ErrSSHConfigLink.Error()+": ")}, skipped...)
+	}
+	s.err = strings.Join(skipped, ", ")
 }

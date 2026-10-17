@@ -71,6 +71,7 @@ func loop(w *app.Window) error {
 	}
 	s.moshBox.Value = settings.Mosh
 	s.reuseBox.Value = settings.Reuse
+	s.exportBox.Value = store.SSHConfigExported()
 	s.nameEd.SingleLine = true
 	s.hostEd.SingleLine = true
 	s.userEd.SingleLine = true

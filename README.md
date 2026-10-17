@@ -54,6 +54,24 @@ In the app: **Settings → Import → Import from ~/.ssh/config**
 - a host with `ProxyCommand` is saved with the alias as its address, so ssh keeps applying that config block on connect, unix socket forwards are skipped, each such case is listed
 - a host whose name, or address, user and port, sshr has already is skipped, running it again adds only what is new
 
+## Exporting to ~/.ssh/config
+
+```sh
+sshr export-ssh-config               # print the hosts as ssh config
+sshr export-ssh-config --install     # write ~/.sshr/ssh_config and include it
+sshr export-ssh-config --uninstall   # remove both
+```
+
+In the app: **Settings → Import → Export to ~/.ssh/config**, off by default, it edits a file of yours
+
+- `--install` writes `~/.sshr/ssh_config` and adds `Include ~/.sshr/ssh_config` as the first line of `~/.ssh/config`, a `Host` line before it would make ssh read the include as part of that block, from then on every change of the hosts rewrites the file, so plain `ssh my-box`, `scp`, `rsync` and editors with remote ssh reach the hosts by name
+- the alias is the host name with everything except letters, digits, `.`, `_` and `-` turned into `-`, `my box` becomes `my-box`
+- exported: `HostName`, `User`, `Port`, a key file as `IdentityFile` with `IdentitiesOnly yes`, an agent as `IdentityAgent` with the chosen key, jump hosts as `ProxyJump` with saved hops replaced by their aliases
+- passwords and keys kept in sshr or 1Password stay in sshr, such a host gets its address and a comment, plain ssh asks for the password, forwards, sessions and shared connections stay sshr options
+- a host whose alias `~/.ssh/config` already has is skipped, ssh takes the first value it reads and the export would shadow your own block, so a host imported from ssh config is not written back
+- a value that ssh could read as a second option (a newline, a quote, a space in an address) skips the host, hosts synced from another device cannot add `ProxyCommand` to your config
+- when `~/.ssh/config` is a link (home-manager, a dotfiles repo), it is not edited, the export is written and sshr prints the `Include` line to add there
+
 ## Connecting with mosh
 
 [mosh](https://mosh.org) keeps a session alive when your network changes or your laptop sleeps, and shows what you type immediately even on a slow link. It is **off by default**, because it has real costs:

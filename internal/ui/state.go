@@ -102,6 +102,7 @@ type state struct {
 	hostEditBtns []widget.Clickable // parallel to hosts
 	uploads      chan uploadResult  // finished image uploads from goroutines
 	importBtn    widget.Clickable
+	exportBox    widget.Bool
 	importing    bool
 	imports      chan importResult
 	uploading    bool
@@ -266,6 +267,9 @@ func (s *state) handle(gtx layout.Context) {
 	s.finishImport(gtx)
 	if s.importBtn.Clicked(gtx) {
 		s.startImport()
+	}
+	if s.exportBox.Update(gtx) {
+		s.setExport(s.exportBox.Value)
 	}
 	if s.modal.open {
 		_ = s.modal.card.Clicked(gtx) // absorb; never dismiss
