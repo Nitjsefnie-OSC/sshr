@@ -4,24 +4,16 @@
 
 ## About
 
-sshr is a desktop SSH hosts manager that keeps your server list local and under your control. It runs as a native Gio UI on your machine, stores hosts as JSON in a local vault (`~/.sshr/vault`), and is built to grow into CLI commands and optional git-based sync across devices — without requiring an agent or special setup on remote systems.
+sshr is an SSH host manager for Linux, macOS and Windows, a desktop app (Gio) and a CLI in one binary, it keeps the server list on your machine (`~/.sshr/vault`, one 0600 JSON file per host) and connects through the system `ssh`, nothing is installed on the servers
 
-It currently supports:
+- hosts with a key file, a key kept inside sshr, a key from an ssh agent or 1Password, or a password saved encrypted with a key from the system keychain, see [Passwords](#passwords), [Keys stored in sshr](#keys-stored-in-sshr), [Keys from an ssh agent](#keys-from-an-ssh-agent), [Passwords and keys in 1Password](#passwords-and-keys-in-1password)
+- jump hosts, tmux or zellij on connect, named port forwards, shared connections and mosh, see [Jump hosts](#jump-hosts), [Keeping the session on the server](#keeping-the-session-on-the-server), [Port forwards](#port-forwards), [Reusing connections](#reusing-connections), [Connecting with mosh](#connecting-with-mosh)
+- hosts in and out: [import](#importing-sshconfig) from and [export](#exporting-to-sshconfig) to `~/.ssh/config`, [sync between devices](#sync-between-devices) through your own end to end encrypted [sync server](#sync-server)
+- [whether a host answers](#is-the-host-up), [clipboard images to a server](#sending-images-to-a-server)
+- for other programs: an [MCP server](#ai-assistants-mcp) for AI assistants and a local [REST API](#rest-api)
+- interface in Russian and English
 
-- Adding and listing SSH hosts (name, host/IP, user, port)
-- CLI commands: `list`, `add`, `rm`, `connect`, `paste`, `forward`, `tunnel`, `close`, `help`
-- Private key support (`-k` flag or interactive selection)
-- Auto-discovery of SSH keys in `~/.ssh/`
-- Interactive authentication method prompt when adding hosts; `--no-key` for password hosts in scripts (with no answer on stdin `add` stops instead of guessing)
-- Local vault storage per host file (0600 permissions)
-- Settings with interface language (Russian / English)
-- Resizable sidebar layout and icon navigation
-- Optional mosh transport, off by default (see [Connecting with mosh](#connecting-with-mosh))
-- Sending a clipboard image to a server, from the CLI and the app (see [Sending images to a server](#sending-images-to-a-server))
-- Jump hosts per host, including chains (see [Jump hosts](#jump-hosts))
-- Attaching to a tmux or zellij session on connect, off by default (see [Keeping the session on the server](#keeping-the-session-on-the-server))
-- Named port forwards per host, opened with a session or as a tunnel (see [Port forwards](#port-forwards))
-- Optional connection reuse, off by default (see [Reusing connections](#reusing-connections))
+Everything with a cost (another connection, a file of yours edited, commands from AI) is off by default and says what it costs next to its switch
 
 ## Install
 
