@@ -24,6 +24,9 @@ func SSHArgs(h *Host) []string {
 		args = append(args,
 			"-o", "PreferredAuthentications=password",
 			"-o", "PubkeyAuthentication=no",
+			// a saved password is the same every time, retrying it only adds
+			// failures for fail2ban to count
+			"-o", "NumberOfPasswordPrompts=1",
 		)
 	}
 	return append(args, "-p", strconv.Itoa(h.Port))

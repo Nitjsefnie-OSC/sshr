@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -64,5 +65,15 @@ func TestAddRejects(t *testing.T) {
 	}
 	if _, err := s.Update("nope", Host{Host: "h", User: "u"}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("Update of a missing host = %v", err)
+	}
+}
+
+func TestSavedPasswordTriedOnce(t *testing.T) {
+	args := strings.Join(SSHArgs(&Host{Port: 22, Password: "x"}), " ")
+	if !strings.Contains(args, "NumberOfPasswordPrompts=1") {
+		t.Errorf("SSHArgs = %q, want NumberOfPasswordPrompts=1", args)
+	}
+	if strings.Contains(strings.Join(SSHArgs(&Host{Port: 22, Key: "/k"}), " "), "NumberOfPasswordPrompts") {
+		t.Error("NumberOfPasswordPrompts set for a key host")
 	}
 }
