@@ -19,7 +19,6 @@ FROM_SOURCE=0
 CLI_ONLY=0
 UNINSTALL=0
 GUI=0
-SRC=""
 PATH_MARK="# added by the sshr installer"
 
 usage() {
@@ -92,17 +91,10 @@ remove_path_line() {
 	say "removed the PATH line from $f"
 }
 
-DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
-ICON_SIZES="16 32 48 64 128 256 512"
-
 if [ "$UNINSTALL" = 1 ]; then
+	if [ -x "$PREFIX/sshr" ]; then "$PREFIX/sshr" desktop-entry --remove >/dev/null 2>&1 && say "removed the application menu entry"; fi
 	rm -f "$PREFIX/sshr"
 	say "removed $PREFIX/sshr"
-	if [ -f "$DATA/applications/sshr.desktop" ]; then
-		rm -f "$DATA/applications/sshr.desktop"
-		for n in $ICON_SIZES; do rm -f "$DATA/icons/hicolor/${n}x$n/apps/sshr.png"; done
-		say "removed the menu entry and icons"
-	fi
 	# the fish file holds only our line, it goes whole
 	fish_rc="${XDG_CONFIG_HOME:-$HOME/.config}/fish/conf.d/sshr.fish"
 	if [ -f "$fish_rc" ] && grep -qF "$PATH_MARK" "$fish_rc"; then rm -f "$fish_rc"; say "removed $fish_rc"; fi
@@ -182,7 +174,6 @@ build_source() {
 		mkdir "$WORK/src" && tar -xzf "$WORK/src.tgz" -C "$WORK/src" --strip-components 1
 		src="$WORK/src"
 	fi
-	SRC="$src"
 	say "building from source in $src"
 	if [ "$CLI_ONLY" = 0 ] && (cd "$src" && CGO_ENABLED=1 go build -o "$WORK/sshr" ./cmd/sshr) 2>"$WORK/gui.log"; then
 		say "built with the GUI"
@@ -207,44 +198,10 @@ cp "$WORK/sshr" "$PREFIX/.sshr.new"
 mv -f "$PREFIX/.sshr.new" "$PREFIX/sshr"
 say "installed $PREFIX/sshr"
 
-# install_desktop adds sshr to the application menu, the window finds its
-# icon by the app id, which is the binary name, so the entry and the icon
-# are both named sshr, icons come from the source tree or the same git ref
-install_desktop() {
-	ref=main
-	[ "$VERSION" = latest ] || ref="$VERSION"
-	for n in $ICON_SIZES; do
-		dir="$DATA/icons/hicolor/${n}x$n/apps"
-		mkdir -p "$dir"
-		if [ -n "$SRC" ] && [ -f "$SRC/assets/icons/sshr-$n.png" ]; then
-			cp "$SRC/assets/icons/sshr-$n.png" "$dir/sshr.png"
-		else
-			fetch "https://raw.githubusercontent.com/$REPO/$ref/assets/icons/sshr-$n.png" "$dir/sshr.png" 2>/dev/null || {
-				rm -f "$dir/sshr.png"
-				say "could not fetch the icons, the menu entry has none"
-				break
-			}
-		fi
-	done
-	mkdir -p "$DATA/applications"
-	cat >"$DATA/applications/sshr.desktop" <<EOF
-[Desktop Entry]
-Type=Application
-Name=sshr
-Comment=SSH host manager
-Exec="$PREFIX/sshr"
-Icon=sshr
-StartupWMClass=sshr
-Terminal=false
-Categories=Network;RemoteAccess;
-EOF
-	if have update-desktop-database; then update-desktop-database -q "$DATA/applications" 2>/dev/null || true; fi
-	if have gtk-update-icon-cache; then gtk-update-icon-cache -q -t "$DATA/icons/hicolor" 2>/dev/null || true; fi
-	say "added sshr to the application menu"
-}
-
-if [ "$OS" = linux ] && [ "$GUI" = 1 ]; then
-	install_desktop
+# the GUI goes to the application menu with its icon, sshr carries the
+# icons and writes the entry itself (an app bundle on macOS)
+if [ "$GUI" = 1 ]; then
+	"$PREFIX/sshr" desktop-entry || say "could not add sshr to the application menu"
 fi
 
 case ":$PATH:" in

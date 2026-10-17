@@ -17,6 +17,7 @@ import (
 	"golang.org/x/term"
 
 	"sshr.dev/internal/app"
+	"sshr.dev/internal/desktop"
 )
 
 func runCLI(args []string) {
@@ -82,6 +83,8 @@ func runCLI(args []string) {
 		cmdSync(store, args[1:])
 	case "import-ssh-config":
 		cmdImportSSHConfig(store, args[1:])
+	case "desktop-entry":
+		cmdDesktopEntry(args[1:])
 	case "export-ssh-config":
 		cmdExportSSHConfig(store, args[1:])
 	case app.ProxyCommandName:
@@ -647,6 +650,11 @@ Usage:
                                     editors reach the hosts by name,
                                     passwords and keys kept in sshr are
                                     not exported
+  sshr desktop-entry [--remove]     add sshr with its icon to the
+                                    application menu: a .desktop entry
+                                    and icons on Linux, ~/Applications/
+                                    sshr.app on macOS (run again after
+                                    an update, the bundle holds a copy)
   sshr help                         show this help
 
   --reuse / --no-reuse              with any command that connects: share
@@ -1021,4 +1029,27 @@ func cmdPing(store *app.Store, args []string) {
 	}
 	w.Flush()
 	os.Exit(code)
+}
+
+// cmdDesktopEntry adds sshr to the application menu or removes it
+func cmdDesktopEntry(args []string) {
+	switch {
+	case len(args) == 1 && args[0] == "--remove":
+		if err := desktop.Remove(); err != nil {
+			fatal(err)
+		}
+		fmt.Println("Removed sshr from the application menu")
+	case len(args) == 0:
+		if !guiBuilt {
+			fatal(errors.New("this build has no GUI, there is nothing to open from the menu"))
+		}
+		path, err := desktop.Install()
+		if err != nil {
+			fatal(err)
+		}
+		fmt.Printf("Added sshr to the application menu: %s\n", path)
+	default:
+		fmt.Fprintln(os.Stderr, "Usage: sshr desktop-entry [--remove]")
+		os.Exit(1)
+	}
 }
