@@ -21,6 +21,24 @@ It currently supports:
 - Named port forwards per host, opened with a session or as a tunnel (see [Port forwards](#port-forwards))
 - Optional connection reuse, off by default (see [Reusing connections](#reusing-connections))
 
+## Install
+
+On Linux and macOS:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/klovbin/sshr/main/install.sh | sh
+```
+
+or `sh install.sh` from a checkout, options in `sh install.sh --help`
+
+- it installs into `~/.local/bin` (`--prefix <dir>` or `SSHR_PREFIX` for another place), no root needed
+- a release binary `sshr_<os>_<arch>` is used when the release has one and it matches `sha256sums.txt`, a binary without a checksum is not installed
+- otherwise sshr is built from source, from the checkout the script runs in or from a fresh clone, it needs Go 1.21 or newer (go fetches the toolchain named in `go.mod` itself), the GUI also needs a C compiler and, on Linux, Wayland/X11 and Vulkan headers, without them the CLI is built and the script says so, `--cli-only` skips the GUI
+- if the directory is not in `PATH`, one line marked `# added by the sshr installer` goes to the startup file of your shell (`~/.bashrc`, `~/.bash_profile` on macOS, `~/.zshrc`, `~/.config/fish/conf.d/sshr.fish` or `~/.profile`), `--no-modify-path` leaves them alone
+- `--uninstall` removes the binary and that line, hosts in `~/.sshr` stay
+
+Packages for AUR, Homebrew, Scoop and nixpkgs are planned ([#17](https://github.com/klovbin/sshr/issues/17)), on Windows build with `go build -o sshr.exe ./cmd/sshr` for now
+
 ## Connecting with mosh
 
 [mosh](https://mosh.org) keeps a session alive when your network changes or your laptop sleeps, and shows what you type immediately even on a slow link. It is **off by default**, because it has real costs:
@@ -213,7 +231,7 @@ In the order we intend to build them (reasons in [docs/WHY.md](docs/WHY.md)):
    - sending clipboard images to the server — done ([#26](https://github.com/klovbin/sshr/issues/26));
    - mosh, off by default — done ([#23](https://github.com/klovbin/sshr/issues/23)).
 3. Password handling: saved encrypted with a key from the system keychain or asked every time - done ([#6](https://github.com/klovbin/sshr/issues/6)), keys stored inside sshr - done ([#12](https://github.com/klovbin/sshr/issues/12)), passwords and keys in 1Password - done ([#13](https://github.com/klovbin/sshr/issues/13))
-4. Cross-platform installer with OS auto-detection and PATH setup ([#11](https://github.com/klovbin/sshr/issues/11))
+4. Installer with OS detection and PATH setup, `install.sh` for Linux and macOS - done ([#2](https://github.com/klovbin/sshr/issues/2)), then packages for AUR, Homebrew, Scoop and nixpkgs ([#17](https://github.com/klovbin/sshr/issues/17))
 5. Sync with key services: 1Password, Bitwarden, ssh-agent ([#14](https://github.com/klovbin/sshr/issues/14))
 6. REST API ([#12](https://github.com/klovbin/sshr/issues/12)) and MCP server ([#13](https://github.com/klovbin/sshr/issues/13)) for integrations and AI assistants
 7. GitHub / git vault sync across machines (see the zero-knowledge idea below)
