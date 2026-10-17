@@ -66,7 +66,7 @@ func cmdPaste(store *app.Store, args []string) {
 
 	// ssh asks for a password on the terminal, not on stdin, so an
 	// interactive run does not need BatchMode.
-	remote, err := app.UploadImage(h, img.Data, img.Ext, false)
+	remote, err := store.UploadImage(h, img.Data, img.Ext, false)
 	if err != nil {
 		fatal(err)
 	}

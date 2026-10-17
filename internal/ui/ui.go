@@ -74,6 +74,7 @@ func loop(w *app.Window) error {
 	s.hostEd.SingleLine = true
 	s.userEd.SingleLine = true
 	s.portEd.SingleLine = true
+	s.jumpEd.SingleLine = true
 	s.portEd.SetText("22")
 	s.reload()
 

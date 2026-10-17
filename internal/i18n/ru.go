@@ -35,6 +35,8 @@ var ru = map[string]string{
 	"field.port": "Порт",
 	"field.key":      "Путь к ключу",
 	"field.password": "Пароль",
+	"field.jump":      "Промежуточный сервер (необязательно)",
+	"field.jump.hint": "Сначала зайти на другой сервер: имя сохранённого хоста или user@host:port, несколько через a,b",
 	"field.auth":     "Аутентификация",
 
 	"auth.password": "Пароль",

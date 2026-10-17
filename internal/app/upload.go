@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -30,6 +31,9 @@ func SSHArgs(h *Host) []string {
 
 // Dest is the user@host argument for ssh.
 func (h *Host) Dest() string {
+	if h.User == "" {
+		return h.Host
+	}
 	return h.User + "@" + h.Host
 }
 
@@ -39,8 +43,9 @@ func (h *Host) Dest() string {
 // that sleep was killed by a logout.
 //
 // batch disables password prompts (ssh -o BatchMode=yes): set it when there
-// is no terminal to ask in, as in the GUI.
-func UploadImage(h *Host, data []byte, ext string, batch bool) (string, error) {
+// is no terminal to ask in, as in the GUI, the upload goes through the
+// host's jump hosts like a normal connection
+func (s *Store) UploadImage(h *Host, data []byte, ext string, batch bool) (string, error) {
 	if _, err := exec.LookPath("ssh"); err != nil {
 		return "", errors.New("ssh not found in PATH")
 	}
@@ -56,7 +61,10 @@ func UploadImage(h *Host, data []byte, ext string, batch bool) (string, error) {
 		`printf "%s" "$f"`,
 	}, "\n")
 
-	args := SSHArgs(h)
+	args, err := s.ConnectArgs(h)
+	if err != nil {
+		return "", err
+	}
 	if batch {
 		args = append(args, "-o", "BatchMode=yes")
 	}
@@ -64,13 +72,17 @@ func UploadImage(h *Host, data []byte, ext string, batch bool) (string, error) {
 	args = append(args, "-o", "ConnectTimeout=10", "-T", "--", h.Dest(), "sh -c "+shQuote(script))
 
 	cmd := exec.Command("ssh", args...)
+	if batch {
+		// Jump hops run as separate ssh processes, they read this too
+		cmd.Env = append(os.Environ(), "SSHR_BATCH=1")
+	}
 	cmd.Stdin = bytes.NewReader(data)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	cleanup := AttachPasswordAuth(cmd, h)
 	defer cleanup()
-	err := cmd.Run()
+	err = cmd.Run()
 	remote := strings.TrimSpace(stdout.String())
 	if err == nil && strings.HasPrefix(remote, "/") {
 		return remote, nil

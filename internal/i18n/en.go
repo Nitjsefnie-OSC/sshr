@@ -36,6 +36,8 @@ var en = map[string]string{
 	"field.key":      "Key path",
 	"field.password": "Password",
 	"field.auth":     "Authentication",
+	"field.jump":      "Jump host (optional)",
+	"field.jump.hint": "Go through another server first: a saved host name or user@host:port, several as a,b",
 
 	"auth.password": "Password",
 	"auth.key":      "Key file",

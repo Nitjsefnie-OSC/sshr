@@ -16,6 +16,7 @@ It currently supports:
 - Resizable sidebar layout and icon navigation
 - Optional mosh transport, off by default (see [Connecting with mosh](#connecting-with-mosh))
 - Sending a clipboard image to a server, from the CLI and the app (see [Sending images to a server](#sending-images-to-a-server))
+- Jump hosts per host, including chains (see [Jump hosts](#jump-hosts))
 
 ## Connecting with mosh
 
@@ -35,6 +36,23 @@ sshr connect --ssh web    # plain ssh even if mosh is on
 ```
 
 If mosh is not installed, or it fails within the first 20 seconds (no mosh-server, UDP blocked), sshr falls back to plain ssh and says so. A key path with spaces cannot be passed through mosh, so such hosts always use ssh.
+
+## Jump hosts
+
+Some servers are reachable only through another one (a bastion), give the host a jump:
+
+```sh
+sshr add 10.0.0.7 -u app -k ~/.ssh/app -J bastion          # a saved host
+sshr add 10.0.0.7 -u app -k ~/.ssh/app -J ops@gw:2222      # or user@host:port
+sshr add 10.0.0.7 -u app -k ~/.ssh/app -J gw,bastion       # a chain: gw first, then bastion
+```
+
+In the app it is the **Jump host** field of the host form, `connect` and `paste` both go through it
+
+- If every hop is a plain `user@host:port`, sshr passes it to ssh as `-J`
+- If a hop is a saved host, ssh runs sshr itself as `ProxyCommand` (`sshr __proxy …`), because `-J` uses only your ssh config and default keys for the hops and would ignore the key or password saved for the bastion, through `ProxyCommand` every hop logs in with its own saved key or password
+- A saved jump host may have its own jump, so a chain can also be built by saving hosts one behind another, a chain that points back at itself stops after 8 hops with an error
+- mosh is not used through a jump host, it needs a direct UDP path to the server, sshr says so and connects with ssh
 
 ## Sending images to a server
 
@@ -73,7 +91,7 @@ In the order we intend to build them (reasons in [docs/WHY.md](docs/WHY.md)):
 
 1. Real-server check of the CLI ([#17](https://github.com/klovbin/sshr/issues/17))
 2. Connect / session workflows on top of system SSH ([#16](https://github.com/klovbin/sshr/issues/16)):
-   - jump hosts via `ProxyJump` ([#19](https://github.com/klovbin/sshr/issues/19)) — some servers are only reachable through a bastion;
+   - jump hosts via `ProxyJump` - done ([#19](https://github.com/klovbin/sshr/issues/19)),
    - attach to tmux/zellij on connect ([#20](https://github.com/klovbin/sshr/issues/20)) — the remote session survives a dropped connection, over plain ssh, on every OS;
    - saved port forwards per host ([#21](https://github.com/klovbin/sshr/issues/21)) — "open DB", "open admin panel" in one click;
    - connection reuse with `ControlMaster`/`ControlPersist` ([#22](https://github.com/klovbin/sshr/issues/22)) — a second session to the same host opens instantly;

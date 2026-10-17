@@ -113,6 +113,12 @@ func layoutForm(gtx layout.Context, th *material.Theme, s *state) layout.Dimensi
 	} else {
 		children = append(children, spacer(10), passwordField(th, s.t("field.password"), &s.passEd))
 	}
+	children = append(children, spacer(12), field(th, s.t("field.jump"), &s.jumpEd),
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			hint := material.Caption(th, s.t("field.jump.hint"))
+			hint.Color = colMuted
+			return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, hint.Layout)
+		}))
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx, children...)
 }
 

@@ -55,6 +55,7 @@ type state struct {
 	portEd   widget.Editor
 	keyEd       widget.Editor
 	passEd      widget.Editor
+	jumpEd      widget.Editor
 	authKind    authKind
 	authPassBtn widget.Clickable
 	authKeyBtn  widget.Clickable
@@ -263,6 +264,7 @@ func (s *state) clearForm() {
 	s.keyEd.SetText("")
 	s.passEd.SetText("")
 	s.passEd.Mask = '•'
+	s.jumpEd.SetText("")
 	s.authKind = authPassword
 	s.form.editID = ""
 }
@@ -317,9 +319,9 @@ func (s *state) saveHost() {
 		err error
 	)
 	if s.form.editID != "" {
-		h, err = s.store.Update(s.form.editID, s.nameEd.Text(), s.hostEd.Text(), s.userEd.Text(), key, password, port)
+		h, err = s.store.Update(s.form.editID, s.nameEd.Text(), s.hostEd.Text(), s.userEd.Text(), key, password, s.jumpEd.Text(), port)
 	} else {
-		h, err = s.store.Add(s.nameEd.Text(), s.hostEd.Text(), s.userEd.Text(), key, password, port)
+		h, err = s.store.Add(s.nameEd.Text(), s.hostEd.Text(), s.userEd.Text(), key, password, s.jumpEd.Text(), port)
 	}
 	if err != nil {
 		s.form.err = s.mapErr(err)

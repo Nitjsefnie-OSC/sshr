@@ -36,6 +36,8 @@ func runCLI(args []string) {
 		cmdConnect(store, args[1:])
 	case "paste":
 		cmdPaste(store, args[1:])
+	case app.ProxyCommandName:
+		cmdProxy(store, args[1:])
 	case "help", "--help", "-h":
 		printUsage()
 	default:
@@ -71,7 +73,7 @@ func cmdList(store *app.Store) {
 }
 
 func cmdAdd(store *app.Store, args []string) {
-	var host, name, user, key string
+	var host, name, user, key, jump string
 	noKey := false
 	port := 22
 	positional := make([]string, 0)
@@ -86,6 +88,11 @@ func cmdAdd(store *app.Store, args []string) {
 			port = mustPort(strings.SplitN(a, "=", 2)[1])
 		} else if strings.HasPrefix(a, "--key=") || strings.HasPrefix(a, "-k=") {
 			key = strings.SplitN(a, "=", 2)[1]
+		} else if strings.HasPrefix(a, "--jump=") || strings.HasPrefix(a, "-J=") {
+			jump = strings.SplitN(a, "=", 2)[1]
+		} else if (a == "-J" || a == "--jump") && i+1 < len(args) {
+			i++
+			jump = args[i]
 		} else if a == "--no-key" {
 			noKey = true
 		} else if (a == "-n" || a == "--name") && i+1 < len(args) {
@@ -109,7 +116,7 @@ func cmdAdd(store *app.Store, args []string) {
 		host = positional[0]
 	}
 	if host == "" {
-		fmt.Fprintln(os.Stderr, "Usage: sshr add <host> -u <user> [-n <name>] [-p <port>] [-k <key> | --no-key]")
+		fmt.Fprintln(os.Stderr, "Usage: sshr add <host> -u <user> [-n <name>] [-p <port>] [-k <key> | --no-key] [-J <jump>]")
 		os.Exit(1)
 	}
 	if user == "" {
@@ -133,7 +140,7 @@ func cmdAdd(store *app.Store, args []string) {
 	} else {
 		password = promptPassword()
 	}
-	h, err := store.Add(name, host, user, key, password, port)
+	h, err := store.Add(name, host, user, key, password, jump, port)
 	if err != nil {
 		fatal(err)
 	}
@@ -142,6 +149,9 @@ func cmdAdd(store *app.Store, args []string) {
 		msg += fmt.Sprintf(" key=%s", h.Key)
 	} else if h.Password != "" {
 		msg += " auth=password"
+	}
+	if h.Jump != "" {
+		msg += " via " + h.Jump
 	}
 	fmt.Println(msg)
 }
@@ -195,9 +205,18 @@ func cmdConnect(store *app.Store, args []string) {
 	if err != nil {
 		findFailed("connect", query, err)
 	}
-	sshOpts := app.SSHArgs(h)
+	sshOpts, err := store.ConnectArgs(h)
+	if err != nil {
+		fatal(err)
+	}
 	dest := h.Dest()
 
+	// mosh needs a direct UDP path to the server, which a bastion does not
+	// give, and its --ssh cannot carry a quoted ProxyCommand
+	if useMosh && h.Jump != "" {
+		fmt.Fprintln(os.Stderr, "sshr: mosh does not work through jump hosts, using ssh")
+		useMosh = false
+	}
 	if useMosh {
 		if code, ok := runMosh(h, sshOpts, dest); ok {
 			os.Exit(code)
@@ -208,8 +227,50 @@ func cmdConnect(store *app.Store, args []string) {
 	if err != nil {
 		fatal(fmt.Errorf("ssh not found in PATH"))
 	}
-	fmt.Printf("Connecting to %s (%s:%d)...\n", h.Name, dest, h.Port)
+	via := ""
+	if h.Jump != "" {
+		via = " via " + h.Jump
+	}
+	fmt.Printf("Connecting to %s (%s:%d)%s...\n", h.Name, dest, h.Port, via)
 	os.Exit(run(h, sshBin, append(sshOpts, "--", dest)...))
+}
+
+// cmdProxy is run by ssh as ProxyCommand ("sshr __proxy <chain> %h %p"), it
+// connects to the last hop of the chain with that hop's own key or password
+// and forwards stdin/stdout to host:port with ssh -W
+func cmdProxy(store *app.Store, args []string) {
+	if len(args) != 3 {
+		fmt.Fprintln(os.Stderr, "usage: sshr __proxy <jump chain> <host> <port>")
+		os.Exit(2)
+	}
+	hop, sshArgs, err := store.ProxyHop(args[0], args[1], args[2])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sshr: %v\n", err)
+		os.Exit(1)
+	}
+	// The askpass of the host behind this hop is in our environment, it must
+	// not answer this hop's password prompt
+	env := make([]string, 0, len(os.Environ()))
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, "SSH_ASKPASS=") && !strings.HasPrefix(kv, "SSH_ASKPASS_REQUIRE=") {
+			env = append(env, kv)
+		}
+	}
+	cmd := exec.Command("ssh", sshArgs...)
+	cmd.Env = env
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cleanup := app.AttachPasswordAuth(cmd, hop)
+	err = cmd.Run()
+	cleanup()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			os.Exit(exitErr.ExitCode())
+		}
+		fatal(err)
+	}
 }
 
 // moshStartup is how long a failing mosh run still counts as "could not
@@ -263,9 +324,11 @@ func printUsage() {
 Usage:
   sshr                              open GUI
   sshr list                         list saved hosts
-  sshr add <host> -u <user> [-n <name>] [-p <port>] [-k <key> | --no-key]
+  sshr add <host> -u <user> [-n <name>] [-p <port>] [-k <key> | --no-key] [-J <jump>]
                                     add a host (asks for the auth method
-                                    unless -k or --no-key is given)
+                                    unless -k or --no-key is given),
+                                    -J a,b goes through jump hosts: saved
+                                    host names or [user@]host[:port]
   sshr rm <name or id>              remove a host
   sshr connect [--mosh|--ssh] <name or id>
                                     ssh into a host (mosh if enabled

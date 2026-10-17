@@ -52,6 +52,9 @@ type Host struct {
 	User      string    `json:"user"`
 	Key       string    `json:"key,omitempty"`
 	Password  string    `json:"password,omitempty"`
+	// Jump lists hosts to go through, "a,b": saved host names/IDs or
+	// [user@]host[:port], empty means a direct connection
+	Jump      string    `json:"jump,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -73,7 +76,7 @@ func DefaultStore() (*Store, error) {
 	return &Store{Dir: dir}, nil
 }
 
-func (s *Store) Add(name, host, user, key, password string, port int) (*Host, error) {
+func (s *Store) Add(name, host, user, key, password, jump string, port int) (*Host, error) {
 	name = strings.TrimSpace(name)
 	host = strings.TrimSpace(host)
 	user = strings.TrimSpace(user)
@@ -105,6 +108,10 @@ func (s *Store) Add(name, host, user, key, password string, port int) (*Host, er
 	if key != "" {
 		password = ""
 	}
+	jump, err = checkJump(jump, name)
+	if err != nil {
+		return nil, err
+	}
 	h := &Host{
 		ID:        id,
 		Name:      name,
@@ -113,6 +120,7 @@ func (s *Store) Add(name, host, user, key, password string, port int) (*Host, er
 		User:      user,
 		Key:       key,
 		Password:  password,
+		Jump:      jump,
 		CreatedAt: time.Now().UTC(),
 	}
 	if err := s.save(h); err != nil {
@@ -205,7 +213,7 @@ func (s *Store) Delete(id string) error {
 }
 
 // Update rewrites an existing host; CreatedAt is kept.
-func (s *Store) Update(id, name, host, user, key, password string, port int) (*Host, error) {
+func (s *Store) Update(id, name, host, user, key, password, jump string, port int) (*Host, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return nil, ErrNotFound
@@ -240,6 +248,10 @@ func (s *Store) Update(id, name, host, user, key, password string, port int) (*H
 	if key != "" {
 		password = ""
 	}
+	jump, err = checkJump(jump, name)
+	if err != nil {
+		return nil, err
+	}
 	h := &Host{
 		ID:        cur.ID,
 		Name:      name,
@@ -248,12 +260,33 @@ func (s *Store) Update(id, name, host, user, key, password string, port int) (*H
 		User:      user,
 		Key:       key,
 		Password:  password,
+		Jump:      jump,
 		CreatedAt: cur.CreatedAt,
 	}
 	if err := s.save(h); err != nil {
 		return nil, err
 	}
 	return h, nil
+}
+
+// checkJump normalizes a jump spec and refuses one that names the host
+// itself, which would loop
+func checkJump(jump, name string) (string, error) {
+	jump, err := normalizeJump(jump)
+	if err != nil {
+		return "", err
+	}
+	for _, p := range SplitJump(jump) {
+		if strings.EqualFold(p, name) {
+			return "", fmt.Errorf("host %q cannot jump through itself", name)
+		}
+		// A saved host name parses as a plain host too, so this only rejects
+		// specs that can never work, like a bad port
+		if _, err := ParseHop(p); err != nil {
+			return "", err
+		}
+	}
+	return jump, nil
 }
 
 func (s *Store) save(h *Host) error {

@@ -35,7 +35,7 @@ func (s *state) startUpload(h sshrapp.Host) {
 		img, err := clip.ReadImage()
 		if err == nil {
 			// No terminal to ask for a password in: key or agent only.
-			res.remote, err = sshrapp.UploadImage(&h, img.Data, img.Ext, true)
+			res.remote, err = s.store.UploadImage(&h, img.Data, img.Ext, true)
 		}
 		res.err = err
 		s.uploads <- res
