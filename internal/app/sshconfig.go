@@ -266,6 +266,18 @@ func hostFromSSHConfig(alias string, g, defaults map[string][]string) (Host, []s
 	return h, notes
 }
 
+// sshDefaults is what ssh uses with no config at all, it reads an empty
+// file, Windows OpenSSH cannot open NUL (os.DevNull) as a config
+func sshDefaults() (map[string][]string, error) {
+	f, err := os.CreateTemp("", "sshr-empty-config-*")
+	if err != nil {
+		return nil, err
+	}
+	f.Close()
+	defer os.Remove(f.Name())
+	return sshG("sshr-import-defaults.invalid", f.Name())
+}
+
 // ImportItem is one alias of the ssh config and what happened to it
 type ImportItem struct {
 	Alias string
@@ -283,7 +295,7 @@ func (s *Store) ImportSSHConfig(dryRun bool) ([]ImportItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	defaults, err := sshG("sshr-import-defaults.invalid", os.DevNull)
+	defaults, err := sshDefaults()
 	if err != nil {
 		return nil, err
 	}
