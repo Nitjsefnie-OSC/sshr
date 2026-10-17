@@ -26,6 +26,8 @@ func layoutHostsList(gtx layout.Context, th *material.Theme, s *state) layout.Di
 		switch {
 		case h.Key != "":
 			authLabel = s.t("auth.key.short") + ": " + filepath.Base(h.Key)
+		case h.KeyMode == sshrapp.KeyVault:
+			authLabel = s.t("auth.vault.short")
 		case h.PasswordMode == sshrapp.PasswordSaved:
 			authLabel = s.t("auth.password.short")
 		case h.PasswordMode == sshrapp.PasswordAsk:
@@ -115,7 +117,19 @@ func layoutForm(gtx layout.Context, th *material.Theme, s *state) layout.Dimensi
 			return layoutAuthPicker(gtx, th, s)
 		}),
 	}
-	if s.authKind == authKey {
+	if s.authKind == authVault {
+		hint := s.t("field.keyPaste.hint")
+		if s.form.vaultKeyPrint != "" {
+			hint = s.t("field.keyPaste.keep", s.form.vaultKeyPrint)
+		}
+		children = append(children, spacer(10), multilineField(th, s.t("field.keyPaste"), &s.keyPasteEd),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				l := material.Caption(th, hint)
+				l.Color = colMuted
+				return layout.Inset{Top: unit.Dp(4)}.Layout(gtx, l.Layout)
+			}),
+			spacer(10), passwordField(th, s.t("field.keyPassphrase"), &s.keyPassEd))
+	} else if s.authKind == authKey {
 		children = append(children, spacer(10), field(th, s.t("field.key"), &s.keyEd))
 	} else {
 		children = append(children, spacer(10), layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -217,6 +231,10 @@ func layoutAuthPicker(gtx layout.Context, th *material.Theme, s *state) layout.D
 				layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
 				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
 					return authChoiceBtn(gtx, th, &s.authKeyBtn, s.t("auth.key"), s.authKind == authKey)
+				}),
+				layout.Rigid(layout.Spacer{Width: unit.Dp(8)}.Layout),
+				layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+					return authChoiceBtn(gtx, th, &s.authVaultBtn, s.t("auth.vault"), s.authKind == authVault)
 				}),
 			)
 		}),

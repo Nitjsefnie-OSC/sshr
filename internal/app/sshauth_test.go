@@ -43,12 +43,12 @@ func TestPasswordSocketAnswersOnce(t *testing.T) {
 	}
 }
 
-func TestAttachPasswordAuthEnv(t *testing.T) {
+func TestAttachPasswordEnv(t *testing.T) {
 	useMockKeychain(t)
 	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
 	cmd := exec.Command("true")
 	cmd.Env = []string{"SSH_ASKPASS=/old", "SSHR_ASKPASS_TOKEN=old", "KEEP=1"}
-	stop, err := AttachPasswordAuth(cmd, &Host{ID: "a", PasswordMode: PasswordSaved, Password: "pw"})
+	stop, err := AttachAuth(cmd, &Host{ID: "a", PasswordMode: PasswordSaved, Password: "pw"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestAttachPasswordAuthEnv(t *testing.T) {
 		t.Errorf("env lost a variable:\n%s", env)
 	}
 	cmd = exec.Command("true")
-	stop2, err := AttachPasswordAuth(cmd, &Host{PasswordMode: PasswordAsk})
+	stop2, err := AttachAuth(cmd, &Host{PasswordMode: PasswordAsk})
 	stop2()
 	if err != nil || cmd.Env != nil {
 		t.Errorf("ask mode touched the command: %v %v", cmd.Env, err)

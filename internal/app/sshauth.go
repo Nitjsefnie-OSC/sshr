@@ -25,14 +25,27 @@ const (
 	askpassTokenEnv = "SSHR_ASKPASS_TOKEN"
 )
 
-// AttachPasswordAuth hands the saved password of h to ssh, ssh runs sshr as
+// AttachAuth gives ssh the secrets of h stored in sshr, a key from the
+// vault through an agent of this process, a saved password through
+// askpass, the returned cleanup stops both after ssh exits
+func AttachAuth(cmd *exec.Cmd, h *Host) (func(), error) {
+	if cmd == nil || h == nil {
+		return func() {}, nil
+	}
+	if h.KeyMode == KeyVault {
+		return attachVaultKey(cmd, h)
+	}
+	return attachPassword(cmd, h)
+}
+
+// attachPassword hands the saved password of h to ssh, ssh runs sshr as
 // SSH_ASKPASS and the helper fetches the password from a socket this process
 // serves, the password is never written to disk or put in the environment,
-// the socket answers once and closes, a wrong password is not retried, the
-// returned cleanup stops it, hosts without a saved password get a no-op
-func AttachPasswordAuth(cmd *exec.Cmd, h *Host) (func(), error) {
+// the socket answers once and closes, a wrong password is not retried, hosts
+// without a saved password get a no-op
+func attachPassword(cmd *exec.Cmd, h *Host) (func(), error) {
 	noop := func() {}
-	if cmd == nil || h == nil || h.Key != "" || h.PasswordMode != PasswordSaved {
+	if h.Key != "" || h.PasswordMode != PasswordSaved {
 		return noop, nil
 	}
 	if err := Unlock(h); err != nil {
@@ -50,7 +63,7 @@ func AttachPasswordAuth(cmd *exec.Cmd, h *Host) (func(), error) {
 	if env == nil {
 		env = os.Environ()
 	}
-	cmd.Env = append(StripAskpassEnv(env),
+	cmd.Env = append(StripAuthEnv(env),
 		"SSH_ASKPASS="+exe,
 		"SSH_ASKPASS_REQUIRE=force",
 		askpassSockEnv+"="+sock,
@@ -59,18 +72,31 @@ func AttachPasswordAuth(cmd *exec.Cmd, h *Host) (func(), error) {
 	return stop, nil
 }
 
-// StripAskpassEnv drops the askpass settings of a host from env, a jump hop
-// must not answer its own password prompt with the password of the host
-// behind it
-func StripAskpassEnv(env []string) []string {
+// StripAuthEnv drops what AttachAuth set for a host from env and puts the
+// user's own SSH_AUTH_SOCK back, a jump hop must not answer its password
+// prompt with the password of the host behind it or offer that host's key
+func StripAuthEnv(env []string) []string {
 	out := make([]string, 0, len(env))
+	orig, hasOrig := "", false
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, authSockOrigEnv+"="); ok {
+			orig, hasOrig = v, true
+		}
+	}
 	for _, kv := range env {
 		name, _, _ := strings.Cut(kv, "=")
 		switch name {
-		case "SSH_ASKPASS", "SSH_ASKPASS_REQUIRE", askpassSockEnv, askpassTokenEnv:
+		case "SSH_ASKPASS", "SSH_ASKPASS_REQUIRE", askpassSockEnv, askpassTokenEnv, authSockOrigEnv:
 			continue
+		case "SSH_AUTH_SOCK":
+			if hasOrig {
+				continue
+			}
 		}
 		out = append(out, kv)
+	}
+	if hasOrig && orig != "" {
+		out = append(out, "SSH_AUTH_SOCK="+orig)
 	}
 	return out
 }
@@ -147,7 +173,7 @@ func RunAskpass(prompt string) int {
 		fmt.Println(pw)
 		return 0
 	}
-	answer, err := askTerminal(prompt)
+	answer, err := AskTerminal(prompt)
 	if err != nil {
 		return 1
 	}
@@ -155,7 +181,7 @@ func RunAskpass(prompt string) int {
 	return 0
 }
 
-// fetchPassword gets the password from the socket of AttachPasswordAuth,
+// fetchPassword gets the password from the socket of attachPassword,
 // after the first answer the socket is closed and this fails
 func fetchPassword(sock, token string) (string, error) {
 	c, err := net.DialTimeout("unix", sock, 5*time.Second)
@@ -174,9 +200,9 @@ func fetchPassword(sock, token string) (string, error) {
 	return strings.TrimSuffix(line, "\n"), nil
 }
 
-// askTerminal shows prompt on the terminal and reads the answer, hidden
-// unless it is a yes/no question
-func askTerminal(prompt string) (string, error) {
+// AskTerminal shows prompt on the terminal and reads the answer, hidden
+// unless it is a yes/no question, it works when stdin is a pipe
+func AskTerminal(prompt string) (string, error) {
 	in, out, err := openTerminal()
 	if err != nil {
 		return "", err

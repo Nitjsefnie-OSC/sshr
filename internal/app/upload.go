@@ -101,7 +101,7 @@ func (s *Store) UploadImage(h *Host, data []byte, ext string, batch bool) (strin
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	cleanup, err := AttachPasswordAuth(cmd, h)
+	cleanup, err := AttachAuth(cmd, h)
 	if err != nil {
 		return "", err
 	}

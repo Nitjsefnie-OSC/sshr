@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -97,6 +98,8 @@ func cmdList(store *app.Store) {
 		switch {
 		case h.Key != "":
 			keyCol = filepath.Base(h.Key)
+		case h.KeyMode == app.KeyVault:
+			keyCol = "key (sshr)"
 		case h.PasswordMode == app.PasswordSaved:
 			keyCol = "password"
 		case h.PasswordMode == app.PasswordAsk:
@@ -113,7 +116,7 @@ func cmdList(store *app.Store) {
 
 func cmdAdd(store *app.Store, args []string) {
 	var host, name, user, key, jump, session string
-	noKey, askPassword := false, false
+	noKey, askPassword, keyStdin := false, false, false
 	port := 22
 	positional := make([]string, 0)
 
@@ -141,6 +144,8 @@ func cmdAdd(store *app.Store, args []string) {
 			noKey = true
 		} else if a == "--ask-password" {
 			askPassword = true
+		} else if a == "--key-stdin" {
+			keyStdin = true
 		} else if (a == "-n" || a == "--name") && i+1 < len(args) {
 			i++
 			name = args[i]
@@ -162,7 +167,7 @@ func cmdAdd(store *app.Store, args []string) {
 		host = positional[0]
 	}
 	if host == "" {
-		fmt.Fprintln(os.Stderr, "Usage: sshr add <host> -u <user> [-n <name>] [-p <port>] [-k <key> | --no-key | --ask-password] [-J <jump>] [--session tmux|zellij]")
+		fmt.Fprintln(os.Stderr, "Usage: sshr add <host> -u <user> [-n <name>] [-p <port>] [-k <key> | --key-stdin | --no-key | --ask-password] [-J <jump>] [--session tmux|zellij]")
 		os.Exit(1)
 	}
 	if user == "" {
@@ -177,8 +182,20 @@ func cmdAdd(store *app.Store, args []string) {
 		fmt.Fprintln(os.Stderr, "sshr add: --ask-password cannot be used with -k or --no-key")
 		os.Exit(1)
 	}
+	if keyStdin && (key != "" || noKey || askPassword) {
+		fmt.Fprintln(os.Stderr, "sshr add: --key-stdin cannot be used with -k, --no-key or --ask-password")
+		os.Exit(1)
+	}
 	var password, passwordMode string
-	if askPassword {
+	var keyData []byte
+	if keyStdin {
+		mustKeychain()
+		b, err := io.ReadAll(io.LimitReader(os.Stdin, 64<<10))
+		if err != nil {
+			fatal(err)
+		}
+		keyData = b
+	} else if askPassword {
 		passwordMode = app.PasswordAsk
 	} else if key != "" {
 		expanded := app.ExpandHome(key)
@@ -188,21 +205,32 @@ func cmdAdd(store *app.Store, args []string) {
 		}
 		key = expanded
 	} else if !noKey {
-		key, password, passwordMode = promptAuthMethod()
+		key, password, passwordMode, keyData = promptAuthMethod()
 	} else {
 		password, passwordMode = promptPassword(), app.PasswordSaved
 	}
-	h, err := store.Add(app.Host{
+	in := app.Host{
 		Name: name, Host: host, User: user, Port: port,
-		Key: key, PasswordMode: passwordMode, Password: password,
+		Key: key, KeyData: keyData, PasswordMode: passwordMode, Password: password,
 		Jump: jump, Session: session,
-	})
+	}
+	h, err := store.Add(in)
+	if errors.Is(err, app.ErrKeyPassphrase) {
+		// the key may have come on stdin, the passphrase is read from the
+		// terminal, it opens the key once and is not stored
+		if in.KeyPassphrase, err = app.AskTerminal("Key passphrase: "); err != nil {
+			fatal(fmt.Errorf("the key has a passphrase and there is no terminal to ask for it"))
+		}
+		h, err = store.Add(in)
+	}
 	if err != nil {
 		fatal(err)
 	}
 	msg := fmt.Sprintf("Added %s (%s@%s:%d)", h.Name, h.User, h.Host, h.Port)
 	if h.Key != "" {
 		msg += fmt.Sprintf(" key=%s", h.Key)
+	} else if h.KeyMode == app.KeyVault {
+		msg += " key stored in sshr (" + h.KeyFingerprint() + ")"
 	} else if h.PasswordMode == app.PasswordSaved {
 		msg += " auth=password (encrypted)"
 	} else if h.PasswordMode == app.PasswordAsk {
@@ -350,11 +378,11 @@ func cmdProxy(store *app.Store, args []string) {
 	cmd := exec.Command("ssh", sshArgs...)
 	// The askpass of the host behind this hop is in our environment, it must
 	// not answer this hop's password prompt
-	cmd.Env = app.StripAskpassEnv(os.Environ())
+	cmd.Env = app.StripAuthEnv(os.Environ())
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cleanup, err := app.AttachPasswordAuth(cmd, hop)
+	cleanup, err := app.AttachAuth(cmd, hop)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "sshr: %v\n", err)
 		os.Exit(1)
@@ -408,7 +436,7 @@ func run(h *app.Host, bin string, args ...string) int {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cleanup, err := app.AttachPasswordAuth(cmd, h)
+	cleanup, err := app.AttachAuth(cmd, h)
 	if err != nil {
 		fatal(err)
 	}
@@ -430,7 +458,7 @@ Usage:
   sshr                              open GUI
   sshr list                         list saved hosts
   sshr add <host> -u <user> [-n <name>] [-p <port>]
-           [-k <key> | --no-key | --ask-password] [-J <jump>]
+           [-k <key> | --key-stdin | --no-key | --ask-password] [-J <jump>]
            [--session tmux|zellij]
                                     add a host (asks for the auth method
                                     unless -k, --no-key or --ask-password
@@ -438,6 +466,9 @@ Usage:
                                     encrypted with a key from the system
                                     keychain, --ask-password saves none,
                                     ssh asks on every connect,
+                                    --key-stdin stores the private key
+                                    read from stdin inside sshr,
+                                    encrypted the same way,
                                     -J a,b goes through jump hosts: saved
                                     host names or [user@]host[:port],
                                     --session attaches to tmux/zellij
@@ -468,29 +499,60 @@ Usage:
                                     or not, overriding the setting`)
 }
 
-func promptAuthMethod() (key, password, mode string) {
+func promptAuthMethod() (key, password, mode string, keyData []byte) {
 	scanner := bufio.NewScanner(os.Stdin)
 	fmt.Println("\nAuthentication method:")
 	fmt.Println("  [1] Specify private key path")
 	fmt.Println("  [2] Find key automatically (~/.ssh/)")
 	fmt.Println("  [3] Password, saved encrypted")
 	fmt.Println("  [4] Password, asked on every connect")
-	fmt.Print("\nChoice [1/2/3/4]: ")
+	fmt.Println("  [5] Paste a private key, stored encrypted in sshr")
+	fmt.Print("\nChoice [1/2/3/4/5]: ")
 
 	choice := readAnswer(scanner)
 	switch choice {
 	case "1":
-		return promptKeyPath(scanner), "", ""
+		return promptKeyPath(scanner), "", "", nil
 	case "2":
-		return pickFromSSHKeys(scanner), "", ""
+		return pickFromSSHKeys(scanner), "", "", nil
 	case "3":
-		return "", promptPasswordWith(scanner), app.PasswordSaved
+		return "", promptPasswordWith(scanner), app.PasswordSaved, nil
 	case "4":
-		return "", "", app.PasswordAsk
+		return "", "", app.PasswordAsk, nil
+	case "5":
+		return "", "", "", promptKeyPaste(scanner)
 	default:
 		fmt.Fprintf(os.Stderr, "\nsshr add: invalid choice %q\n", choice)
 		os.Exit(1)
-		return "", "", ""
+		return "", "", "", nil
+	}
+}
+
+// promptKeyPaste reads a pasted private key up to its END line
+func promptKeyPaste(scanner *bufio.Scanner) []byte {
+	mustKeychain()
+	fmt.Println("Paste the private key, it ends with the -----END ... line:")
+	var b strings.Builder
+	for scanner.Scan() {
+		line := scanner.Text()
+		b.WriteString(line + "\n")
+		if strings.HasPrefix(strings.TrimSpace(line), "-----END ") {
+			return []byte(b.String())
+		}
+		if b.Len() > 64<<10 {
+			break
+		}
+	}
+	fmt.Fprintln(os.Stderr, "sshr add: no -----END line, the key is incomplete")
+	os.Exit(1)
+	return nil
+}
+
+// mustKeychain stops before a secret is typed when it could not be saved
+func mustKeychain() {
+	if err := app.CheckKeychain(); err != nil {
+		fmt.Fprintf(os.Stderr, "sshr add: %v\n", err)
+		os.Exit(1)
 	}
 }
 

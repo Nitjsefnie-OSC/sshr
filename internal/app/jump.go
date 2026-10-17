@@ -124,7 +124,8 @@ func (s *Store) ConnectArgs(h *Host) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	args := append(SSHArgs(h), s.reuseArgs(h)...)
+	args := append(SSHArgs(h), s.vaultKeyArgs(h)...)
+	args = append(args, s.reuseArgs(h)...)
 	return append(args, jump...), nil
 }
 

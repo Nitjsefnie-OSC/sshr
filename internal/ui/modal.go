@@ -35,12 +35,15 @@ type formModal struct {
 	// hasSavedPassword is set when the edited host already has a saved
 	// password, an empty password field then keeps it
 	hasSavedPassword bool
-	err              string
-	save             widget.Clickable
-	cancel           widget.Clickable
-	scrim            widget.Clickable
-	card             widget.Clickable
-	blockScrim       bool
+	// vaultKeyPrint is the fingerprint of the key the edited host keeps in
+	// sshr, an empty paste field then keeps it
+	vaultKeyPrint string
+	err           string
+	save          widget.Clickable
+	cancel        widget.Clickable
+	scrim         widget.Clickable
+	card          widget.Clickable
+	blockScrim    bool
 }
 
 func (s *state) openDeleteConfirm(h sshrapp.Host) {
@@ -72,7 +75,14 @@ func (s *state) openEditForm(h sshrapp.Host) {
 	// the saved password is not decrypted for the form, it stays in the
 	// vault unless a new one is typed
 	s.passEd.SetText("")
-	if h.Key != "" {
+	if h.KeyMode == sshrapp.KeyVault {
+		s.authKind = authVault
+		s.keyEd.SetText("")
+		s.form.vaultKeyPrint = h.KeyFingerprint()
+		if s.form.vaultKeyPrint == "" {
+			s.form.vaultKeyPrint = "?"
+		}
+	} else if h.Key != "" {
 		s.authKind = authKey
 		s.keyEd.SetText(h.Key)
 	} else {

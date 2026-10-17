@@ -36,6 +36,8 @@ type authKind int
 const (
 	authPassword authKind = iota
 	authKey
+	// authVault is a private key pasted into the form, stored in sshr
+	authVault
 )
 
 // state holds UI widgets, vault data, and transient status/errors.
@@ -49,17 +51,20 @@ type state struct {
 	win          *app.Window
 
 	// Host form editors (shown in form modal).
-	nameEd      widget.Editor
-	hostEd      widget.Editor
-	userEd      widget.Editor
-	portEd      widget.Editor
-	keyEd       widget.Editor
-	passEd      widget.Editor
-	jumpEd      widget.Editor
-	fwdEd       widget.Editor // one forward per line, "db -L 5432:localhost:5432"
-	authKind    authKind
-	authPassBtn widget.Clickable
-	authKeyBtn  widget.Clickable
+	nameEd       widget.Editor
+	hostEd       widget.Editor
+	userEd       widget.Editor
+	portEd       widget.Editor
+	keyEd        widget.Editor
+	passEd       widget.Editor
+	jumpEd       widget.Editor
+	fwdEd        widget.Editor // one forward per line, "db -L 5432:localhost:5432"
+	authKind     authKind
+	authPassBtn  widget.Clickable
+	authKeyBtn   widget.Clickable
+	authVaultBtn widget.Clickable
+	keyPasteEd   widget.Editor // pasted private key
+	keyPassEd    widget.Editor // its passphrase, if any
 	// passMode is sshrapp.PasswordSaved or sshrapp.PasswordAsk
 	passMode     string
 	passSavedBtn widget.Clickable
@@ -191,6 +196,9 @@ func (s *state) handle(gtx layout.Context) {
 	if s.authKeyBtn.Clicked(gtx) {
 		s.authKind = authKey
 	}
+	if s.authVaultBtn.Clicked(gtx) {
+		s.authKind = authVault
+	}
 	if s.passSavedBtn.Clicked(gtx) {
 		s.passMode = sshrapp.PasswordSaved
 	}
@@ -299,7 +307,10 @@ func (s *state) clearForm() {
 	s.session = ""
 	s.authKind = authPassword
 	s.passMode = sshrapp.PasswordSaved
+	s.keyPasteEd.SetText("")
+	s.keyPassEd.SetText("")
 	s.form.editID = ""
+	s.form.vaultKeyPrint = ""
 	s.form.hasSavedPassword = false
 }
 
@@ -319,6 +330,10 @@ func (s *state) mapErr(err error) string {
 		return s.t("err.password_required")
 	case errors.Is(err, sshrapp.ErrAsksPassword):
 		return s.t("err.asksPassword")
+	case errors.Is(err, sshrapp.ErrKeyPassphrase):
+		return s.t("err.keyPassphrase")
+	case errors.Is(err, sshrapp.ErrKeyRequired):
+		return s.t("err.keyPaste_required")
 	default:
 		return err.Error()
 	}
@@ -337,7 +352,18 @@ func (s *state) saveHost() {
 	key := ""
 	password := ""
 	passMode := ""
-	if s.authKind == authKey {
+	keyMode, passphrase := "", ""
+	var keyData []byte
+	if s.authKind == authVault {
+		keyMode = sshrapp.KeyVault
+		if t := strings.TrimSpace(s.keyPasteEd.Text()); t != "" {
+			keyData = []byte(t)
+			passphrase = s.keyPassEd.Text()
+		} else if s.form.vaultKeyPrint == "" {
+			s.form.err = s.t("err.keyPaste_required")
+			return
+		}
+	} else if s.authKind == authKey {
 		key = strings.TrimSpace(s.keyEd.Text())
 		if key == "" {
 			s.form.err = s.t("err.key_required")
@@ -366,16 +392,19 @@ func (s *state) saveHost() {
 	}
 	var h *sshrapp.Host
 	in := sshrapp.Host{
-		Name:         s.nameEd.Text(),
-		Host:         s.hostEd.Text(),
-		User:         s.userEd.Text(),
-		Port:         port,
-		Key:          key,
-		PasswordMode: passMode,
-		Password:     password,
-		Jump:         s.jumpEd.Text(),
-		Session:      s.session,
-		Forwards:     forwards,
+		Name:          s.nameEd.Text(),
+		Host:          s.hostEd.Text(),
+		User:          s.userEd.Text(),
+		Port:          port,
+		Key:           key,
+		KeyMode:       keyMode,
+		KeyData:       keyData,
+		KeyPassphrase: passphrase,
+		PasswordMode:  passMode,
+		Password:      password,
+		Jump:          s.jumpEd.Text(),
+		Session:       s.session,
+		Forwards:      forwards,
 	}
 	if s.form.editID != "" {
 		h, err = s.store.Update(s.form.editID, in)

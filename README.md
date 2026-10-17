@@ -137,6 +137,20 @@ How a saved password reaches ssh:
 - an older sshr that edits a host drops the encrypted password, the host then needs the password again
 - if the keychain is reset or `~/.sshr` is copied to another machine, a saved password no longer opens, sshr asks to save it again
 
+## Keys stored in sshr
+
+A host can keep its private key inside sshr instead of a key file (**Key in sshr** in the host form, `--key-stdin` or choice 5 in `sshr add`), the key is sealed in the host file the same way as a saved password, no key file is written to `~/.ssh`
+
+```sh
+sshr add web -u deploy --key-stdin < key   # asks for the passphrase on the terminal if the key has one
+```
+
+- a key with a passphrase is opened once when you add it and stored without the passphrase, the vault encryption takes its place
+- on connect sshr opens the key and serves it from an ssh agent of its own process for as long as ssh runs, on a unix socket in the 0700 `ControlDir` (a named pipe on Windows), the private key is only in memory
+- ssh gets `-i <host>.pub -o IdentitiesOnly=yes -o IdentityAgent=SSH_AUTH_SOCK`, so it offers only this key, not the keys of your own agent or `~/.ssh`, agent forwarding is turned off for the host so the server cannot reach the key
+- the public half is kept next to the host file (`~/.sshr/vault/hosts/<id>.pub`), the host form and `sshr add` show its fingerprint
+- a jump hop gets your own `SSH_AUTH_SOCK` back
+
 ## Sending images to a server
 
 Pasting a screenshot into a remote session gives the server a path on *your* disk, which it cannot open. Remote Claude Code, an editor or a script just gets a useless string. sshr uploads the image to the host instead and gives you the path on the server.
@@ -180,7 +194,7 @@ In the order we intend to build them (reasons in [docs/WHY.md](docs/WHY.md)):
    - connection reuse with `ControlMaster`/`ControlPersist`, off by default - done ([#22](https://github.com/klovbin/sshr/issues/22)),
    - sending clipboard images to the server — done ([#26](https://github.com/klovbin/sshr/issues/26));
    - mosh, off by default — done ([#23](https://github.com/klovbin/sshr/issues/23)).
-3. Password handling: saved encrypted with a key from the system keychain or asked every time - done ([#6](https://github.com/klovbin/sshr/issues/6)), keys stored inside sshr ([#12](https://github.com/klovbin/sshr/issues/12))
+3. Password handling: saved encrypted with a key from the system keychain or asked every time - done ([#6](https://github.com/klovbin/sshr/issues/6)), keys stored inside sshr - done ([#12](https://github.com/klovbin/sshr/issues/12))
 4. Cross-platform installer with OS auto-detection and PATH setup ([#11](https://github.com/klovbin/sshr/issues/11))
 5. Sync with key services: 1Password, Bitwarden, ssh-agent ([#14](https://github.com/klovbin/sshr/issues/14))
 6. REST API ([#12](https://github.com/klovbin/sshr/issues/12)) and MCP server ([#13](https://github.com/klovbin/sshr/issues/13)) for integrations and AI assistants

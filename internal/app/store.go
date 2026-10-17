@@ -22,6 +22,8 @@ var (
 	ErrPortInvalid  = errors.New("port_invalid")
 	// ErrPasswordRequired means PasswordSaved was chosen with no password
 	ErrPasswordRequired = errors.New("password_required")
+	// ErrKeyRequired means KeyVault was chosen with no key pasted
+	ErrKeyRequired = errors.New("key_required")
 )
 
 // Password modes of a host, an empty mode means no password at all, the
@@ -62,6 +64,18 @@ type Host struct {
 	Port int    `json:"port"`
 	User string `json:"user"`
 	Key  string `json:"key,omitempty"`
+	// KeyMode is KeyVault for a private key stored inside sshr, empty for
+	// a key file in Key or no key
+	KeyMode string `json:"key_mode,omitempty"`
+	// KeyData is a pasted private key, in memory only, set it to save a
+	// new one
+	KeyData []byte `json:"-"`
+	// KeyPassphrase opens a passphrase-protected KeyData, never stored
+	KeyPassphrase string `json:"-"`
+	// KeySealed is the private key encrypted with the vault key
+	KeySealed string `json:"key_sealed,omitempty"`
+	// KeyPub is the public half of the stored key, authorized_keys format
+	KeyPub string `json:"key_pub,omitempty"`
 	// PasswordMode is PasswordSaved, PasswordAsk or empty
 	PasswordMode string `json:"password_mode,omitempty"`
 	// Password is the plain password, in memory only, set it to save a new
@@ -112,7 +126,7 @@ func (s *Store) Add(in Host) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := needPassword(&h); err != nil {
+	if err := needSecret(&h); err != nil {
 		return nil, err
 	}
 	if h.ID, err = newID(); err != nil {
@@ -158,7 +172,23 @@ func cleanHost(h Host) (Host, error) {
 	default:
 		return h, fmt.Errorf("unknown password mode %q", h.PasswordMode)
 	}
-	if h.Key != "" {
+	if len(h.KeyData) > 0 {
+		h.KeyMode = KeyVault
+	}
+	switch h.KeyMode {
+	case "":
+		h.KeyData, h.KeyPassphrase, h.KeySealed, h.KeyPub = nil, "", "", ""
+	case KeyVault:
+		h.Key = ""
+		if len(h.KeyData) > 0 {
+			if err := prepareVaultKey(&h); err != nil {
+				return h, err
+			}
+		}
+	default:
+		return h, fmt.Errorf("unknown key mode %q", h.KeyMode)
+	}
+	if h.Key != "" || h.KeyMode == KeyVault {
 		h.PasswordMode = ""
 	}
 	if h.PasswordMode != PasswordSaved {
@@ -261,6 +291,7 @@ func (s *Store) Delete(id string) error {
 		}
 		return err
 	}
+	os.Remove(filepath.Join(s.Dir, id+".pub"))
 	return nil
 }
 
@@ -283,7 +314,11 @@ func (s *Store) Update(id string, in Host) (*Host, error) {
 	if h.PasswordMode == PasswordSaved && h.Password == "" && h.PasswordSealed == "" && h.PlainPassword == "" {
 		h.PasswordSealed, h.PlainPassword = cur.PasswordSealed, cur.PlainPassword
 	}
-	if err := needPassword(&h); err != nil {
+	// no new key pasted keeps the stored one
+	if h.KeyMode == KeyVault && len(h.KeyData) == 0 && h.KeySealed == "" {
+		h.KeySealed, h.KeyPub = cur.KeySealed, cur.KeyPub
+	}
+	if err := needSecret(&h); err != nil {
 		return nil, err
 	}
 	h.ID, h.CreatedAt = cur.ID, cur.CreatedAt
@@ -313,11 +348,30 @@ func checkJump(jump, name string) (string, error) {
 	return jump, nil
 }
 
-// needPassword refuses PasswordSaved with no password to save
-func needPassword(h *Host) error {
+// needSecret refuses PasswordSaved with no password and KeyVault with no
+// key to save
+func needSecret(h *Host) error {
 	if h.PasswordMode == PasswordSaved && h.Password == "" && h.PasswordSealed == "" && h.PlainPassword == "" {
 		return ErrPasswordRequired
 	}
+	if h.KeyMode == KeyVault && len(h.KeyData) == 0 && h.KeySealed == "" {
+		return ErrKeyRequired
+	}
+	return nil
+}
+
+// sealKey encrypts a newly pasted private key before the host is written,
+// with no keychain the host is not saved, the key is never written
+// unencrypted
+func sealKey(h *Host) error {
+	if h.KeyMode != KeyVault || len(h.KeyData) == 0 {
+		return nil
+	}
+	sealed, err := seal(h.KeyData, h.ID, "key")
+	if err != nil {
+		return err
+	}
+	h.KeySealed = sealed
 	return nil
 }
 
@@ -374,6 +428,9 @@ func (s *Store) save(h *Host) error {
 	if err := sealPassword(h); err != nil {
 		return err
 	}
+	if err := sealKey(h); err != nil {
+		return err
+	}
 	b, err := json.MarshalIndent(h, "", "  ")
 	if err != nil {
 		return err
@@ -383,7 +440,10 @@ func (s *Store) save(h *Host) error {
 	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	return s.writePub(h)
 }
 
 func newID() (string, error) {
