@@ -214,3 +214,7 @@ func CheckKeychain() error {
 	_, err := VaultKey()
 	return err
 }
+
+// LockFile holds an exclusive lock on path until the returned func runs,
+// the sync server keeps one instance per data directory with it
+func LockFile(path string) (func(), error) { return lockFile(path) }

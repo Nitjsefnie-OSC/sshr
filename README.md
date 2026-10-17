@@ -256,6 +256,22 @@ Security:
 - a request with an `Origin` header (a web page) or a `Host` that is not a loopback name (DNS rebinding) is refused
 - passwords, private keys and 1Password references are never returned, and are not taken either, a saved password or a pasted key is added in the app or with `sshr add`
 
+## Sync server
+
+`sshr-sync` is the server devices sync through, a separate binary, it stores only device public keys, encrypted blobs and signed manifests, it cannot read hosts or passwords, it can only lose data or refuse service
+
+```sh
+go build -o sshr-sync ./cmd/sshr-sync
+sshr-sync --autocert sync.example.com --listen :443 --data /var/lib/sshr-sync    # Let's Encrypt
+sshr-sync --tls-cert cert.pem --tls-key key.pem --listen :8443 --data ./data
+sshr-sync --plain-http --listen 127.0.0.1:8080 --data ./data                      # behind a TLS reverse proxy
+```
+
+- every device has its own bearer token, the server keeps only its SHA-256, new accounts and joins are limited to 10 an hour per address, a joined device can do nothing until an existing device approves it
+- a manifest is replaced only with `If-Match` naming the current counter and only when every blob it names is stored, so two devices pushing at once cannot overwrite each other and a broken upload leaves the old state
+- blobs are content-addressed (SHA-256, at most 1 MiB), blobs no manifest needs are removed after a day, the last 1000 manifests are kept for the history check
+- one server per data directory (file lock), TLS 1.3 only, plain HTTP only on a loopback address
+
 ## Sending images to a server
 
 Pasting a screenshot into a remote session gives the server a path on *your* disk, which it cannot open. Remote Claude Code, an editor or a script just gets a useless string. sshr uploads the image to the host instead and gives you the path on the server.
