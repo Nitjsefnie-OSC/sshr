@@ -1,0 +1,368 @@
+// Package mcp serves sshr to AI assistants over the Model Context Protocol,
+// JSON-RPC on stdin and stdout, the assistant starts `sshr mcp` itself, so
+// the server is local to the user and needs no token
+package mcp
+
+import (
+	"bufio"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"sshr.dev/internal/app"
+)
+
+// protocol versions this server speaks, newest first
+var versions = []string{"2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"}
+
+// Options are the choices made when the server starts
+type Options struct {
+	// AllowCommands offers run_command, off by default: an assistant that
+	// can run commands on every saved server can also break them
+	AllowCommands bool
+	Version       string
+}
+
+type request struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id,omitempty"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params,omitempty"`
+}
+
+type rpcError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+type response struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"`
+	Result  any             `json:"result,omitempty"`
+	Error   *rpcError       `json:"error,omitempty"`
+}
+
+// Serve answers requests from r on w until r ends
+func Serve(r io.Reader, w io.Writer, store *app.Store, opts Options) error {
+	s := &server{store: store, opts: opts, w: w}
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 64<<10), 8<<20)
+	var wg sync.WaitGroup
+	for sc.Scan() {
+		line := sc.Bytes()
+		if len(strings.TrimSpace(string(line))) == 0 {
+			continue
+		}
+		var req request
+		if err := json.Unmarshal(line, &req); err != nil {
+			s.send(response{JSONRPC: "2.0", ID: json.RawMessage("null"), Error: &rpcError{-32700, "parse error"}})
+			continue
+		}
+		if len(req.ID) == 0 {
+			// a notification, initialized and cancelled need no answer
+			continue
+		}
+		// a command can take minutes, other requests are answered meanwhile
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.handle(req)
+		}()
+	}
+	wg.Wait()
+	return sc.Err()
+}
+
+type server struct {
+	store *app.Store
+	opts  Options
+	mu    sync.Mutex
+	w     io.Writer
+}
+
+func (s *server) send(resp response) {
+	b, err := json.Marshal(resp)
+	if err != nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.w.Write(append(b, '\n'))
+}
+
+func (s *server) handle(req request) {
+	resp := response{JSONRPC: "2.0", ID: req.ID}
+	switch req.Method {
+	case "initialize":
+		var p struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		json.Unmarshal(req.Params, &p)
+		version := versions[0]
+		for _, v := range versions {
+			if v == p.ProtocolVersion {
+				version = v
+			}
+		}
+		resp.Result = map[string]any{
+			"protocolVersion": version,
+			"capabilities":    map[string]any{"tools": map[string]any{}},
+			"serverInfo":      map[string]any{"name": "sshr", "version": s.opts.Version},
+			"instructions":    "sshr holds the user's SSH hosts. Use list_hosts to find a host by name, upload_file to put a local file on a server (it is removed there after 15 minutes). Passwords and private keys are never returned.",
+		}
+	case "ping":
+		resp.Result = map[string]any{}
+	case "tools/list":
+		resp.Result = map[string]any{"tools": s.tools()}
+	case "tools/call":
+		var p struct {
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
+		}
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			resp.Error = &rpcError{-32602, "invalid params"}
+			break
+		}
+		result, err := s.call(p.Name, p.Arguments)
+		if errors.Is(err, errUnknownTool) {
+			resp.Error = &rpcError{-32602, err.Error()}
+			break
+		}
+		if err != nil {
+			// tool errors go back as results, so the assistant can read them
+			result = toolResult{Content: []content{{Type: "text", Text: err.Error()}}, IsError: true}
+		}
+		resp.Result = result
+	default:
+		resp.Error = &rpcError{-32601, "method not found: " + req.Method}
+	}
+	s.send(resp)
+}
+
+type content struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+type toolResult struct {
+	Content           []content `json:"content"`
+	StructuredContent any       `json:"structuredContent,omitempty"`
+	IsError           bool      `json:"isError,omitempty"`
+}
+
+var errUnknownTool = errors.New("unknown tool")
+
+func (s *server) tools() []map[string]any {
+	hostArg := map[string]any{"type": "string", "description": "host name, address or ID as shown by list_hosts"}
+	tools := []map[string]any{
+		{
+			"name":        "list_hosts",
+			"description": "List the saved SSH hosts: name, address, user, port, how it logs in, jump hosts, session and port forwards. No passwords or keys.",
+			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+			"annotations": map[string]any{"readOnlyHint": true, "openWorldHint": false},
+		},
+		{
+			"name":        "upload_file",
+			"description": "Copy a local file to a saved host into ~/.cache/sshr/pasted/ and return its path on the server. The file is removed there after 15 minutes.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"host": hostArg,
+					"path": map[string]any{"type": "string", "description": "absolute path of the local file"},
+				},
+				"required": []string{"host", "path"},
+			},
+			"annotations": map[string]any{"readOnlyHint": false, "destructiveHint": false, "openWorldHint": true},
+		},
+	}
+	if s.opts.AllowCommands {
+		tools = append(tools, map[string]any{
+			"name":        "run_command",
+			"description": "Run a shell command on a saved host without a terminal and return its output and exit code. Output is cut at 64 KiB per stream. Interactive programs do not work.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"host":            hostArg,
+					"command":         map[string]any{"type": "string", "description": "command line, run with sh on the server"},
+					"timeout_seconds": map[string]any{"type": "integer", "description": "stop the command after this many seconds, default 60, at most 600"},
+				},
+				"required": []string{"host", "command"},
+			},
+			"annotations": map[string]any{"readOnlyHint": false, "destructiveHint": true, "openWorldHint": true},
+		})
+	}
+	return tools
+}
+
+func (s *server) call(name string, raw json.RawMessage) (toolResult, error) {
+	switch name {
+	case "list_hosts":
+		return s.listHosts()
+	case "upload_file":
+		var a struct{ Host, Path string }
+		if err := json.Unmarshal(raw, &a); err != nil {
+			return toolResult{}, err
+		}
+		return s.uploadFile(a.Host, a.Path)
+	case "run_command":
+		if !s.opts.AllowCommands {
+			return toolResult{}, errUnknownTool
+		}
+		var a struct {
+			Host           string `json:"host"`
+			Command        string `json:"command"`
+			TimeoutSeconds int    `json:"timeout_seconds"`
+		}
+		if err := json.Unmarshal(raw, &a); err != nil {
+			return toolResult{}, err
+		}
+		return s.runCommand(a.Host, a.Command, a.TimeoutSeconds)
+	}
+	return toolResult{}, fmt.Errorf("%w %q", errUnknownTool, name)
+}
+
+// hostInfo is what an assistant may know about a host
+type hostInfo struct {
+	Name     string   `json:"name"`
+	ID       string   `json:"id"`
+	Address  string   `json:"address"`
+	User     string   `json:"user"`
+	Port     int      `json:"port"`
+	Auth     string   `json:"auth"`
+	Jump     string   `json:"jump,omitempty"`
+	Session  string   `json:"session,omitempty"`
+	Forwards []string `json:"forwards,omitempty"`
+}
+
+func authLabel(h *app.Host) string {
+	switch {
+	case h.Key != "":
+		return "key file"
+	case h.KeyMode == app.KeyVault:
+		return "key stored in sshr"
+	case h.KeyMode == app.KeyOnePassword:
+		return "key in 1Password"
+	case h.KeyMode == app.KeyAgent:
+		return "key from an ssh agent"
+	case h.PasswordMode == app.PasswordSaved:
+		return "saved password"
+	case h.PasswordMode == app.PasswordOnePassword:
+		return "password in 1Password"
+	case h.PasswordMode == app.PasswordAsk:
+		return "password asked every time (not usable here)"
+	}
+	return "ssh config or agent"
+}
+
+func (s *server) listHosts() (toolResult, error) {
+	hosts, err := s.store.List()
+	if err != nil {
+		return toolResult{}, err
+	}
+	out := make([]hostInfo, 0, len(hosts))
+	for i := range hosts {
+		h := &hosts[i]
+		info := hostInfo{Name: h.Name, ID: h.ID, Address: h.Host, User: h.User, Port: h.Port, Auth: authLabel(h), Jump: h.Jump, Session: h.Session}
+		for _, f := range h.Forwards {
+			info.Forwards = append(info.Forwards, f.String())
+		}
+		out = append(out, info)
+	}
+	b, _ := json.MarshalIndent(out, "", "  ")
+	return toolResult{
+		Content:           []content{{Type: "text", Text: string(b)}},
+		StructuredContent: map[string]any{"hosts": out},
+	}, nil
+}
+
+func (s *server) findHost(query string) (*app.Host, error) {
+	h, err := s.store.Find(query)
+	var amb *app.AmbiguousError
+	switch {
+	case errors.As(err, &amb):
+		names := make([]string, len(amb.Hosts))
+		for i, h := range amb.Hosts {
+			names[i] = h.Name + " (" + h.ID[:8] + ")"
+		}
+		return nil, fmt.Errorf("%q matches several hosts: %s, use the ID", query, strings.Join(names, ", "))
+	case errors.Is(err, app.ErrNotFound):
+		return nil, fmt.Errorf("no saved host %q, see list_hosts", query)
+	}
+	return h, err
+}
+
+// uploadMax keeps an assistant from pushing huge files through ssh by
+// mistake
+const uploadMax = 100 << 20
+
+func (s *server) uploadFile(host, path string) (toolResult, error) {
+	h, err := s.findHost(host)
+	if err != nil {
+		return toolResult{}, err
+	}
+	if !filepath.IsAbs(path) {
+		return toolResult{}, errors.New("path must be absolute")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return toolResult{}, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > uploadMax {
+		return toolResult{}, fmt.Errorf("%s is not a regular file of at most %d MiB", path, uploadMax>>20)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return toolResult{}, err
+	}
+	ext := strings.TrimPrefix(filepath.Ext(path), ".")
+	if ext == "" {
+		ext = "bin"
+	}
+	remote, err := s.store.UploadImage(h, data, ext, true)
+	if err != nil {
+		return toolResult{}, err
+	}
+	return toolResult{
+		Content:           []content{{Type: "text", Text: remote}},
+		StructuredContent: map[string]any{"host": h.Name, "path": remote},
+	}, nil
+}
+
+func (s *server) runCommand(host, command string, timeout int) (toolResult, error) {
+	h, err := s.findHost(host)
+	if err != nil {
+		return toolResult{}, err
+	}
+	if strings.TrimSpace(command) == "" {
+		return toolResult{}, errors.New("empty command")
+	}
+	if timeout <= 0 {
+		timeout = 60
+	}
+	if timeout > 600 {
+		timeout = 600
+	}
+	fmt.Fprintf(os.Stderr, "sshr mcp: run on %s: %s\n", h.Name, command)
+	res, err := s.store.RunRemote(h, command, nil, time.Duration(timeout)*time.Second)
+	if err != nil {
+		return toolResult{}, err
+	}
+	text := fmt.Sprintf("exit code %d\n--- stdout\n%s\n--- stderr\n%s", res.ExitCode, res.Stdout, res.Stderr)
+	if res.Truncated {
+		text += "\n(output cut at 64 KiB)"
+	}
+	return toolResult{
+		Content: []content{{Type: "text", Text: text}},
+		StructuredContent: map[string]any{
+			"host": h.Name, "exit_code": res.ExitCode,
+			"stdout": string(res.Stdout), "stderr": string(res.Stderr), "truncated": res.Truncated,
+		},
+		IsError: res.ExitCode != 0,
+	}, nil
+}

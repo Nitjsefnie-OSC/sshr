@@ -72,6 +72,8 @@ func runCLI(args []string) {
 			fatal(err)
 		}
 		fmt.Printf("Closed the shared connection to %s\n", h.Name)
+	case "mcp":
+		cmdMCP(store, args[1:])
 	case app.ProxyCommandName:
 		cmdProxy(store, args[1:])
 	case "help", "--help", "-h":
@@ -577,6 +579,12 @@ Usage:
                                     to the host and print its path there;
                                     -c also copies that path; removed from
                                     the server after 15 minutes
+  sshr mcp [--allow-commands|--no-commands]
+                                    MCP server on stdin/stdout for AI
+                                    assistants: list hosts, upload files,
+                                    run commands only with
+                                    --allow-commands or the mcp_commands
+                                    setting (off by default)
   sshr help                         show this help
 
   --reuse / --no-reuse              with any command that connects: share

@@ -202,6 +202,30 @@ sshr add web -u deploy --op-key "op://Private/web key/private key"     # the key
 - a new password for a host linked to an item is changed in 1Password, not in sshr
 - `op` cannot import an existing private key, add it to 1Password in the app (New Item, SSH Key, Add Private Key, Import a Key File), then link it with `--op-key`
 
+## AI assistants (MCP)
+
+`sshr mcp` is an [MCP](https://modelcontextprotocol.io) server, AI assistants such as Claude Code, Codex or Cursor start it and get your saved hosts as tools, so "look at the nginx logs on web" works without copying addresses and keys
+
+```sh
+claude mcp add --transport stdio sshr -- sshr mcp                    # Claude Code
+claude mcp add --transport stdio sshr -- sshr mcp --allow-commands   # and let it run commands
+```
+
+Other clients take the usual block, `{"mcpServers": {"sshr": {"command": "sshr", "args": ["mcp"]}}}`
+
+Tools:
+
+- `list_hosts` - names, addresses, users, ports, how each host logs in, jump hosts, sessions and forwards, read only
+- `upload_file` - copies a local file to `~/.cache/sshr/pasted/` on a host and returns the path there, removed after 15 minutes like a pasted image
+- `run_command` - runs a command with `sh` on a host without a terminal and returns stdout, stderr (64 KiB each at most) and the exit code, stopped on the server after `timeout_seconds` (60 by default, 600 at most) when it has `timeout`, **off by default**, it needs `--allow-commands` or `"mcp_commands": true` in `~/.sshr/settings.json`, because an assistant that can run commands on every saved server can also break them, the tool is marked destructive, so clients ask before each call unless you turned that off
+
+What it never does:
+
+- passwords and private keys never leave sshr, a host logs in the same way as a CLI upload, with its key file, the sshr agent, an ssh agent or a saved password through the one-time askpass socket
+- hosts set to ask for the password every time cannot be used, there is nobody to ask
+- it listens on nothing, the assistant runs `sshr mcp` as its own child process and talks over stdin and stdout, so no port and no token
+- every command is logged to stderr, which the assistant shows in its MCP logs
+
 ## Sending images to a server
 
 Pasting a screenshot into a remote session gives the server a path on *your* disk, which it cannot open. Remote Claude Code, an editor or a script just gets a useless string. sshr uploads the image to the host instead and gives you the path on the server.
@@ -248,7 +272,7 @@ In the order we intend to build them (reasons in [docs/WHY.md](docs/WHY.md)):
 3. Password handling: saved encrypted with a key from the system keychain or asked every time - done ([#6](https://github.com/klovbin/sshr/issues/6)), keys stored inside sshr - done ([#12](https://github.com/klovbin/sshr/issues/12)), passwords and keys in 1Password - done ([#13](https://github.com/klovbin/sshr/issues/13)), keys from ssh agents including 1Password - done ([#5](https://github.com/klovbin/sshr/issues/5))
 4. Installer with OS detection and PATH setup, `install.sh` for Linux and macOS - done ([#2](https://github.com/klovbin/sshr/issues/2)), then packages for AUR, Homebrew, Scoop and nixpkgs ([#17](https://github.com/klovbin/sshr/issues/17))
 5. Sync with key services: 1Password, Bitwarden, ssh-agent - done ([#5](https://github.com/klovbin/sshr/issues/5), [#13](https://github.com/klovbin/sshr/issues/13))
-6. REST API ([#12](https://github.com/klovbin/sshr/issues/12)) and MCP server ([#13](https://github.com/klovbin/sshr/issues/13)) for integrations and AI assistants
+6. MCP server for AI assistants - done ([#4](https://github.com/klovbin/sshr/issues/4)), REST API for integrations ([#3](https://github.com/klovbin/sshr/issues/3))
 7. GitHub / git vault sync across machines (see the zero-knowledge idea below)
 
 Not planned: Eternal Terminal (another server daemon for what tmux and mosh already cover) and autossh (meant for permanent tunnels, not interactive work).

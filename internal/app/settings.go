@@ -23,6 +23,11 @@ type Settings struct {
 	// keeps its password in 1Password, empty means the account's default
 	// vault
 	OPVault string `json:"op_vault,omitempty"`
+	// MCPCommands lets AI assistants run commands on saved hosts through
+	// sshr mcp, off by default: an assistant that can run commands on every
+	// server can also break them, most clients ask before each tool call,
+	// but that can be turned off on their side
+	MCPCommands bool `json:"mcp_commands,omitempty"`
 }
 
 func settingsPath() (string, error) {
