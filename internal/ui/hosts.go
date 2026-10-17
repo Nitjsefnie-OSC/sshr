@@ -145,7 +145,7 @@ func layoutForm(gtx layout.Context, th *material.Theme, s *state) layout.Dimensi
 			return layoutSessionPicker(gtx, th, s)
 		}),
 		spacer(12),
-		field(th, s.t("field.forwards"), &s.fwdEd),
+		multilineField(th, s.t("field.forwards"), &s.fwdEd),
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			hint := material.Caption(th, s.t("field.forwards.hint"))
 			hint.Color = colMuted
@@ -250,6 +250,25 @@ func field(th *material.Theme, label string, ed *widget.Editor) layout.FlexChild
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 				ed.Submit = false
 				ed.SingleLine = true
+				return material.Editor(th, ed, label).Layout(gtx)
+			}),
+		)
+	})
+}
+
+// multilineField is field for text with one entry per line
+func multilineField(th *material.Theme, label string, ed *widget.Editor) layout.FlexChild {
+	return layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+		return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				l := material.Caption(th, label)
+				l.Color = colMuted
+				return l.Layout(gtx)
+			}),
+			layout.Rigid(layout.Spacer{Height: unit.Dp(4)}.Layout),
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				ed.Submit = false
+				ed.SingleLine = false
 				return material.Editor(th, ed, label).Layout(gtx)
 			}),
 		)
