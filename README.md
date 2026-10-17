@@ -39,7 +39,8 @@ or `sh install.sh` from a checkout, options in `sh install.sh --help`
 - if the directory is not in `PATH`, one line marked `# added by the sshr installer` goes to the startup file of your shell (`~/.bashrc`, `~/.bash_profile` on macOS, `~/.zshrc`, `~/.config/fish/conf.d/sshr.fish` or `~/.profile`), `--no-modify-path` leaves them alone
 - on Linux, when the GUI is installed, sshr goes to the application menu: `sshr.desktop` in `~/.local/share/applications` and the icon in `~/.local/share/icons/hicolor`, the window gets the same icon, its app id is the binary name `sshr`
 - `--uninstall` removes the binary, the menu entry, the icons and the PATH line, hosts in `~/.sshr` stay
-- the logo in every size is in `assets/icons`, the Windows `.exe` icon and a macOS app bundle are not made yet
+- the logo in every size is in `assets/icons`, a macOS app bundle is not made yet
+- Windows: the icon and version info are resources of `sshr.exe` (`cmd/sshr/rsrc_windows_*.syso`), `go build` links them in, the window and Explorer show it, after changing the logo run `go generate ./cmd/sshr`
 
 Packages for AUR, Homebrew, Scoop and nixpkgs are planned ([#17](https://github.com/klovbin/sshr/issues/17)), on Windows build with `go build -o sshr.exe ./cmd/sshr` for now
 
