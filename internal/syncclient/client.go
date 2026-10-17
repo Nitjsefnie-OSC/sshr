@@ -660,12 +660,35 @@ func (c *Client) apply(m *syncproto.Manifest) error {
 			continue
 		}
 		if plain, ok := local[id]; ok && seen && c.localHash(plain) != known.Local {
+			// neither side is lost, the later change keeps the host and
+			// the other one becomes a copy that syncs like any host
 			mine := syncproto.Entry{Lamport: known.Lamport + 1, Device: c.st.DeviceID}
 			if newer(mine, e) {
-				c.logf("conflict on %s: kept the change made here", id[:8])
+				if !e.Deleted {
+					p, err := c.fetchPayload(id, e, key, m.Epoch)
+					if err != nil {
+						return err
+					}
+					p.Host.Password = p.Password
+					p.Host.ID = ""
+					p.Host.Name = conflictName(p.Host.Name, e.Device)
+					cp, err := c.Store.Add(p.Host)
+					if err != nil {
+						return fmt.Errorf("keeping the other version of %s: %v", p.Host.Name, err)
+					}
+					c.logf("conflict on %s: kept the change made here, the one from device %s is saved as %q", id[:8], e.Device[:8], cp.Name)
+				}
 				continue
 			}
-			c.logf("conflict on %s: the change from device %s replaced the one made here", id[:8], e.Device[:8])
+			var name string
+			if h, err := c.Store.Find(id); err == nil {
+				name = h.Name
+			}
+			cp, err := c.Store.Duplicate(id, conflictName(name, c.st.DeviceID))
+			if err != nil {
+				return fmt.Errorf("keeping the local version of %s: %v", name, err)
+			}
+			c.logf("conflict on %s: the change from device %s won, the one made here is saved as %q", id[:8], e.Device[:8], cp.Name)
 		}
 		next := entryState{Lamport: e.Lamport, Device: e.Device, Blob: e.Hash, Deleted: e.Deleted}
 		if e.Deleted {
@@ -678,26 +701,9 @@ func (c *Client) apply(m *syncproto.Manifest) error {
 			c.st.Entries[id] = next
 			continue
 		}
-		code, blob, _, err := c.call("GET", "/blobs/"+e.Hash, nil, nil)
+		p, err := c.fetchPayload(id, e, key, m.Epoch)
 		if err != nil {
 			return err
-		}
-		if code != http.StatusOK {
-			return serverError(code, blob)
-		}
-		if blobHash(blob) != e.Hash {
-			return fmt.Errorf("blob of %s does not match its hash", id[:8])
-		}
-		plain, err := openEntry(key, c.st.Account, id, m.Epoch, blob)
-		if err != nil {
-			return err
-		}
-		var p payload
-		if err := json.Unmarshal(plain, &p); err != nil {
-			return fmt.Errorf("entry %s: %v", id[:8], err)
-		}
-		if p.Host.ID != id {
-			return fmt.Errorf("entry %s holds host %s", id[:8], p.Host.ID)
 		}
 		p.Host.Password = p.Password
 		h, err := c.Store.Import(p.Host)
@@ -713,6 +719,37 @@ func (c *Client) apply(m *syncproto.Manifest) error {
 		c.logf("updated %s", h.Name)
 	}
 	return nil
+}
+
+// fetchPayload downloads and opens the blob of entry id
+func (c *Client) fetchPayload(id string, e syncproto.Entry, key []byte, epoch int) (*payload, error) {
+	code, blob, _, err := c.call("GET", "/blobs/"+e.Hash, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	if code != http.StatusOK {
+		return nil, serverError(code, blob)
+	}
+	if blobHash(blob) != e.Hash {
+		return nil, fmt.Errorf("blob of %s does not match its hash", id[:8])
+	}
+	plain, err := openEntry(key, c.st.Account, id, epoch, blob)
+	if err != nil {
+		return nil, err
+	}
+	var p payload
+	if err := json.Unmarshal(plain, &p); err != nil {
+		return nil, fmt.Errorf("entry %s: %v", id[:8], err)
+	}
+	if p.Host.ID != id {
+		return nil, fmt.Errorf("entry %s holds host %s", id[:8], p.Host.ID)
+	}
+	return &p, nil
+}
+
+// conflictName names the copy that keeps the losing side of a conflict
+func conflictName(name, device string) string {
+	return fmt.Sprintf("%s (conflict %s %s)", name, device[:6], time.Now().Format("2006-01-02 15:04"))
 }
 
 func (c *Client) localHosts() (map[string][]byte, error) {

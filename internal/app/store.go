@@ -417,6 +417,32 @@ func (s *Store) Import(in Host) (*Host, error) {
 	return &h, nil
 }
 
+// Duplicate saves a copy of host id under a new ID and name, its saved
+// password and stored key are sealed again for the new ID, the sync keeps
+// the losing side of a conflict this way
+func (s *Store) Duplicate(id, name string) (*Host, error) {
+	cur, err := s.Find(id)
+	if err != nil {
+		return nil, err
+	}
+	h := *cur
+	if err := Unlock(&h); err != nil && h.PasswordMode == PasswordSaved {
+		return nil, err
+	}
+	if h.PasswordMode == PasswordOnePassword {
+		h.Password = ""
+	}
+	if h.KeyMode == KeyVault && h.KeySealed != "" {
+		plain, err := unseal(h.KeySealed, h.ID, "key")
+		if err != nil {
+			return nil, err
+		}
+		h.KeyData, h.KeySealed = plain, ""
+	}
+	h.ID, h.Name, h.PasswordSealed, h.PlainPassword = "", name, "", ""
+	return s.Add(h)
+}
+
 // validID accepts the IDs newID makes, the ID becomes a file name
 func validID(id string) bool {
 	if len(id) != 32 {

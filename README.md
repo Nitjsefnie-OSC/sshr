@@ -298,7 +298,7 @@ Limits:
 - a device that is new or lost its state accepts whatever the server shows as the current state, a device that synced before refuses an older one (`--accept-reset` after a real server restore)
 - a server could show two devices different histories, they keep syncing apart, compare the state fingerprint in `sshr sync status` on two screens, equal means the same history
 - the server sees how many hosts there are (sizes are padded), when devices push, their addresses and device names, and it can hold back changes
-- two devices changing the same host before syncing keep the later change, the other is replaced and `sshr sync` says so
+- two devices changing the same host before syncing keep the later change in the host and the other one as a copy named `<name> (conflict <device> <date>)`, the copy syncs like any host, delete it when you have looked, nothing is lost silently
 - a removed device keeps what it already downloaded
 - key file paths sync but the files do not, jump hosts refer to names, sync needs the system keychain, it runs when you call `sshr sync`, there is no automatic sync yet
 

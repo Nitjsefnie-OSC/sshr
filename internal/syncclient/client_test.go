@@ -139,6 +139,44 @@ func TestSyncConflict(t *testing.T) {
 	if !strings.Contains(w.log.String(), "conflict") {
 		t.Errorf("no conflict reported:\n%s", w.log.String())
 	}
+	// the losing port is kept as a copy on both devices
+	must(t, w.b.Push())
+	must(t, w.a.Pull())
+	for _, c := range []*Client{w.a, w.b} {
+		hosts, _ := c.Store.List()
+		ports := map[int]bool{}
+		copies := 0
+		for _, h := range hosts {
+			ports[h.Port] = true
+			if strings.Contains(h.Name, "(conflict ") {
+				copies++
+			}
+		}
+		if !ports[3000] || !ports[3001] || copies != 1 {
+			t.Errorf("hosts after the conflict: %+v", hosts)
+		}
+	}
+}
+
+func TestConflictKeepsPasswordAndKey(t *testing.T) {
+	w := newWorld(t)
+	w.pair()
+	h, err := w.a.Store.Add(app.Host{Name: "k", Host: "10.0.0.7", User: "u", KeyData: testKeyPEM(t)})
+	must(t, err)
+	cp, err := w.a.Store.Duplicate(h.ID, "k copy")
+	must(t, err)
+	if cp.ID == h.ID || cp.KeySealed == "" || cp.KeyPub != h.KeyPub {
+		t.Errorf("duplicate = %+v", cp)
+	}
+	p, err := w.a.Store.Add(app.Host{Name: "p", Host: "10.0.0.8", User: "u", PasswordMode: app.PasswordSaved, Password: "pw x"})
+	must(t, err)
+	cp, err = w.a.Store.Duplicate(p.ID, "p copy")
+	must(t, err)
+	got, _ := w.a.Store.Find(cp.ID)
+	must(t, app.Unlock(got))
+	if got.Password != "pw x" {
+		t.Errorf("duplicate password = %q", got.Password)
+	}
 }
 
 func TestSyncVaultKeyStaysLocal(t *testing.T) {
