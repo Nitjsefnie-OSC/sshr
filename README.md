@@ -42,6 +42,15 @@ sshr list '#prod' db           # exact tag prod and "db" anywhere
 
 App: **Tags** in the host form, the search field above the list takes the same words. Tags sync with the hosts
 
+## Running a command on many hosts
+
+```sh
+sshr run -t prod -- uptime                  # every host tagged prod
+sshr run web db --timeout 30 -- 'df -h /'   # by name
+```
+
+8 hosts at a time (`-j`), each host's output as a block, exit 1 when one fails, the command is stopped on the server after `--timeout` (60 s), hosts that ask for a password are skipped
+
 ## Importing ~/.ssh/config
 
 ```sh

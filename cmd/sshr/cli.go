@@ -55,6 +55,8 @@ func runCLI(args []string) {
 		cmdPing(store, args[1:])
 	case "tag":
 		cmdTag(store, args[1:])
+	case "run":
+		cmdRun(store, args[1:])
 	case "add":
 		cmdAdd(store, args[1:])
 	case "rm", "remove":
@@ -597,6 +599,11 @@ Usage:
                                     or #x needs the exact tag, --ping
                                     adds whether each answers (on by
                                     default with health_check)
+  sshr run [-t <tag>]... [-j N] [--timeout S] [name...] -- <command>
+                                    run a command on several hosts at
+                                    once, by name and by tag (all tags),
+                                    8 at a time, each host's output as a
+                                    block, exits 1 when one fails
   sshr tag <name or id> [+tag|-tag|tag...]
                                     show, add (+ or bare) or remove (-)
                                     tags of a host

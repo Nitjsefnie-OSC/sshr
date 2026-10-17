@@ -69,6 +69,12 @@ mcp key 'echo sshr-ok-$((40+2))' | tee "$w/out1" | grep 'sshr-ok-42'
 # shellcheck disable=SC2016
 mcp inner 'echo via-jump-$((40+2))' | tee "$w/out2" | grep 'via-jump-42'
 
+# both hosts by tag, through sshr run
+"$sshr" tag key +e2e
+"$sshr" tag inner +e2e
+# shellcheck disable=SC2016
+test "$("$sshr" run -t e2e -- 'echo run-$((40+2))' | grep -c '^run-42$')" = 2
+
 echo "hello from ci" >"$w/up.txt"
 remote="$("$sshr" paste -f "$w/up.txt" key | tail -n 1)"
 mcp key "cat $remote" | grep 'hello from ci'
