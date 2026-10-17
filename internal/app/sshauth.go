@@ -18,7 +18,22 @@ func AttachPasswordAuth(cmd *exec.Cmd, h *Host) func() {
 		return noop
 	}
 	script := filepath.Join(dir, "askpass")
-	body := "#!/bin/sh\nprintf '%s\\n' " + shQuote(h.Password) + "\n"
+	// SSH_ASKPASS_REQUIRE=force sends every prompt here, the host key
+	// question and key passphrases included, only a password prompt gets the
+	// password, the rest is asked on the terminal, input hidden unless it is
+	// a yes/no question
+	body := "#!/bin/sh\n" +
+		"case \"$1\" in\n" +
+		"*[Pp]assword:|*[Pp]assword:\\ ) printf '%s\\n' " + shQuote(h.Password) + " ;;\n" +
+		"*)\n" +
+		"\t( : </dev/tty ) 2>/dev/null || exit 1\n" +
+		"\tprintf '%s' \"$1\" >/dev/tty\n" +
+		"\tcase \"$1\" in *'?'|*'? '|*yes/no*) ;; *) stty -echo </dev/tty ;; esac\n" +
+		"\tIFS= read -r a </dev/tty\n" +
+		"\tstty echo </dev/tty\n" +
+		"\tcase \"$1\" in *'?'|*'? '|*yes/no*) ;; *) printf '\\n' >/dev/tty ;; esac\n" +
+		"\tprintf '%s\\n' \"$a\" ;;\n" +
+		"esac\n"
 	if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
 		os.RemoveAll(dir)
 		return noop
