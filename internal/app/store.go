@@ -218,15 +218,26 @@ func (s *Store) upgradeSealsLocked() {
 		h := &hosts[i]
 		// a host of a newer format is not written by this build, opening
 		// its seal would only reach the keychain on every start
-		if h.format > hostFormat || h.PasswordMode != PasswordSaved || !strings.HasPrefix(h.PasswordSealed, sealPrefix) {
+		if h.format > hostFormat {
 			continue
 		}
-		plain, err := unseal(h.PasswordSealed, h.ID, "password")
-		if err != nil {
-			continue
+		changed := false
+		if h.PasswordMode == PasswordSaved && strings.HasPrefix(h.PasswordSealed, sealPrefix) {
+			if plain, err := unseal(h.PasswordSealed, h.ID, "password"); err == nil {
+				h.Password, h.PasswordSealed = string(plain), ""
+				changed = true
+			}
 		}
-		h.Password, h.PasswordSealed = string(plain), ""
-		s.save(h)
+		// a stored key sealed before keys were bound to their destination
+		if h.KeyMode == KeyVault && strings.HasPrefix(h.KeySealed, sealPrefix) {
+			if plain, err := unseal(h.KeySealed, h.ID, "key"); err == nil {
+				h.KeyData, h.KeySealed = plain, ""
+				changed = true
+			}
+		}
+		if changed {
+			s.save(h)
+		}
 	}
 }
 
@@ -566,6 +577,13 @@ func (s *Store) update(id string, in Host, setGateway bool) (*Host, error) {
 	if h.KeyMode == KeyVault && len(h.KeyData) == 0 && h.KeySealed == "" {
 		h.KeySealed, h.KeyPub = cur.KeySealed, cur.KeyPub
 	}
+	if h.KeyMode == KeyVault && len(h.KeyData) == 0 && h.KeySealed != "" && h.KeySealed == cur.KeySealed && destination(h) != destination(*cur) {
+		plain, err := reopenKey(cur, h)
+		if err != nil {
+			return nil, err
+		}
+		h.KeyData, h.KeySealed = plain, ""
+	}
 	// the 1Password item of the password stays the same unless another one
 	// is given
 	if h.PasswordMode == PasswordOnePassword && h.PasswordRef == "" {
@@ -617,6 +635,15 @@ func (s *Store) importHost(in Host) (*Host, error) {
 		in.KeySealed = ""
 		if cur != nil && cur.KeyMode == KeyVault && cur.KeyPub == in.KeyPub {
 			in.KeySealed = cur.KeySealed
+			if cur.KeySealed != "" && destination(in) != destination(*cur) {
+				// the host moved on the other device, the key here goes with
+				// it, sealed again for the new place
+				plain, err := reopenKey(cur, in)
+				if err != nil {
+					return nil, err
+				}
+				in.KeyData, in.KeySealed = plain, ""
+			}
 		}
 	}
 	in.PlainPassword, in.PasswordSealed = "", ""
@@ -831,7 +858,7 @@ func (s *Store) duplicate(id, name string) (*Host, error) {
 		}
 	}
 	if h.KeyMode == KeyVault && h.KeySealed != "" {
-		plain, err := unseal(h.KeySealed, h.ID, "key")
+		plain, err := unsealFor(h.KeySealed, h.ID, "key", destination(h))
 		if err != nil {
 			return nil, err
 		}
@@ -922,12 +949,29 @@ func sealKey(h *Host) error {
 	if h.KeyMode != KeyVault || len(h.KeyData) == 0 {
 		return nil
 	}
-	sealed, err := seal(h.KeyData, h.ID, "key")
+	// sealed for the server it may be offered to, like a saved password, a
+	// host file edited to point elsewhere does not get the key
+	sealed, err := sealFor(h.KeyData, h.ID, "key", destination(*h))
 	if err != nil {
 		return err
 	}
 	h.KeySealed = sealed
 	return nil
+}
+
+// reopenKey opens the stored key of cur for a host h that keeps it while
+// its destination changed through sshr, so it is sealed again for h, a
+// seal that does not open for the file opens for h when h is the place it
+// was sealed for (a field edited by hand and put back)
+func reopenKey(cur *Host, h Host) ([]byte, error) {
+	plain, err := unsealFor(cur.KeySealed, cur.ID, "key", destination(*cur))
+	if errors.Is(err, ErrSealBroken) {
+		plain, err = unsealFor(cur.KeySealed, cur.ID, "key", destination(h))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("the stored key of %s does not open, paste it again: %v", cur.Name, err)
+	}
+	return plain, nil
 }
 
 // sealPassword encrypts a new password, or an old unencrypted one, before

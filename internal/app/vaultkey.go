@@ -113,7 +113,7 @@ func loadKey(h *Host) (any, error) {
 			return nil, fmt.Errorf("%s has no saved key, save it again", h.Name)
 		}
 		var err error
-		plain, err = unseal(h.KeySealed, h.ID, "key")
+		plain, err = unsealFor(h.KeySealed, h.ID, "key", destination(*h))
 		if errors.Is(err, ErrSealBroken) {
 			return nil, fmt.Errorf("the saved key of %s does not open with the vault key of this machine (keychain reset or the host copied from another machine), save the key again", h.Name)
 		}
