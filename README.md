@@ -55,4 +55,6 @@ Bugs and ideas go to [issues](https://github.com/klovbin/sshr/issues), build wit
 
 ## License
 
-[AGPL-3.0](LICENSE)
+Copyright (c) 2026 klovbin
+
+sshr is released under the [GNU Affero General Public License v3.0](LICENSE). You may use, study, change and share it, a changed version you give to others or run as a network service for others must be released under the same license with its source code. The software is provided without any warranty.
