@@ -244,6 +244,9 @@ func (s *Store) add(in Host) (*Host, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := fillKeyPub(&h); err != nil {
+		return nil, err
+	}
 	if err := needSecret(&h); err != nil {
 		return nil, err
 	}
@@ -329,25 +332,11 @@ func cleanHost(h Host) (Host, error) {
 		if err := checkOPRef(h.KeyRef); err != nil {
 			return h, err
 		}
-		if h.KeyPub == "" {
-			pub, err := opKeyPub(h.KeyRef)
-			if err != nil {
-				return h, err
-			}
-			h.KeyPub = pub
-		}
 	case KeyBitwarden:
 		h.Key, h.KeyData, h.KeyPassphrase, h.KeySealed = "", nil, "", ""
 		h.KeyRef = strings.TrimSpace(h.KeyRef)
 		if err := checkBWRef(h.KeyRef); err != nil {
 			return h, err
-		}
-		if h.KeyPub == "" {
-			pub, err := bwKeyPub(h.KeyRef)
-			if err != nil {
-				return h, err
-			}
-			h.KeyPub = pub
 		}
 	default:
 		return h, fmt.Errorf("unknown key mode %q", h.KeyMode)
@@ -581,6 +570,9 @@ func (s *Store) update(id string, in Host, setGateway bool) (*Host, error) {
 	// is given
 	if h.PasswordMode == PasswordOnePassword && h.PasswordRef == "" {
 		h.PasswordRef = cur.PasswordRef
+	}
+	if err := fillKeyPub(&h); err != nil {
+		return nil, err
 	}
 	if err := needSecret(&h); err != nil {
 		return nil, err
@@ -880,6 +872,30 @@ func checkJump(jump, name string) (string, error) {
 		}
 	}
 	return jump, nil
+}
+
+// fillKeyPub reads the public half of a key kept in 1Password or Bitwarden
+// once, when the host does not have it yet, cleanHost only checks fields
+// and runs no program, so a host is validated without op or bw
+func fillKeyPub(h *Host) error {
+	if h.KeyPub != "" {
+		return nil
+	}
+	var pub string
+	var err error
+	switch h.KeyMode {
+	case KeyOnePassword:
+		pub, err = opKeyPub(h.KeyRef)
+	case KeyBitwarden:
+		pub, err = bwKeyPub(h.KeyRef)
+	default:
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	h.KeyPub = pub
+	return nil
 }
 
 // needSecret refuses PasswordSaved with no password and KeyVault with no

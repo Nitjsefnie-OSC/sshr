@@ -138,6 +138,7 @@ The core builds the ssh, scp and remote command lines and runs `op`, `bw`, `scp`
 ## Rules for new code
 
 - a feature goes into `app` first, front ends only parse input and print output
+- `cleanHost` only checks and normalizes fields and runs no program, reading a public key from 1Password or Bitwarden happens in `fillKeyPub` when a host is added or edited
 - every host from another device enters through `Store.Import`, which runs `FromOtherDevice` and `cleanHost`: a field that names a local secret (an item, a socket, a file) is reset in `FromOtherDevice`, a field that reaches a command line gets a validator in `cleanHost` and a check again where the line is built
 - `payloadOf` strips fields from what syncs, everything else syncs, a new field that must stay on this machine has to be added there, the unknown keys of a host travel too (`app.HostPayloadJSON`), except those named `local_...`, which a newer sshr uses for what stays on one machine, a payload with no unknown keys (from an older sshr) leaves the keys here as they are
 - files are written with `app.WriteFileAtomic`, never `os.WriteFile` over the target
