@@ -228,6 +228,11 @@ func (s *Store) upgradeSealsLocked() {
 				changed = true
 			}
 		}
+		// a password an old version wrote in clear, save seals it once the
+		// keychain works and leaves it as it is while there is none
+		if h.PasswordMode == PasswordSaved && h.PlainPassword != "" && h.PasswordSealed == "" {
+			changed = true
+		}
 		// a stored key sealed before keys were bound to their destination
 		if h.KeyMode == KeyVault && strings.HasPrefix(h.KeySealed, sealPrefix) {
 			if plain, err := unseal(h.KeySealed, h.ID, "key"); err == nil {

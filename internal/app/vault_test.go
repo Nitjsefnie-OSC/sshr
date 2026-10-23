@@ -343,3 +343,22 @@ func TestNoSecondKeyAfterATimedOutStore(t *testing.T) {
 		t.Fatal("a key reached the keychain")
 	}
 }
+
+// a password an old version wrote in clear is sealed at the next start
+// once the keychain works (#176)
+func TestClearPasswordIsSealedAtStart(t *testing.T) {
+	useMockKeychain(t)
+	s := &Store{Dir: t.TempDir()}
+	id := "0123456789abcdef0123456789abcdef"
+	path := filepath.Join(s.Dir, id+".json")
+	os.WriteFile(path, []byte(`{"id":"`+id+`","name":"w","host":"10.0.0.1","port":22,"user":"u","password":"pw","created_at":"2026-10-01T00:00:00Z"}`), 0o600)
+	s.upgradeSeals()
+	b, _ := os.ReadFile(path)
+	if strings.Contains(string(b), `"password"`) || !strings.Contains(string(b), `"password_sealed": "v2:`) {
+		t.Fatalf("host file:\n%s", b)
+	}
+	h, _ := s.Find(id)
+	if err := Unlock(h); err != nil || h.Password != "pw" {
+		t.Fatalf("%v %q", err, h.Password)
+	}
+}
