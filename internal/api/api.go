@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"sshr.dev/internal/app"
+	"sshr.dev/internal/audit"
 )
 
 // Options are the choices made when the server starts
@@ -29,7 +30,45 @@ type Options struct {
 	Token string
 	// AllowCommands enables POST /v1/hosts/{host}/run, off by default
 	AllowCommands bool
+	// Audit records every request that changes something or runs on a
+	// host, nil keeps no record
+	Audit *audit.Log
+	// Client names the caller of a request for the audit log, the remote
+	// address when nil
+	Client func(*http.Request) string
+	// CommandsAllowed says whether a command may run on a host, nil allows
+	// every host
+	CommandsAllowed func(*app.Host) error
+	// ConfirmCommands refuses commands, the user wants to be asked before
+	// each and a REST client has no way to ask
+	ConfirmCommands bool
 }
+
+// begin writes the start of an action to the audit log and answers 503
+// itself when it cannot, nil then means the action must not run
+func (a *api) begin(w http.ResponseWriter, r *http.Request, action string, h *app.Host, command string) func(int, int64, error) {
+	client := r.RemoteAddr
+	if a.opts.Client != nil {
+		client = a.opts.Client(r)
+	}
+	end, err := a.opts.Audit.Begin(audit.Record{Surface: "rest", Client: client, Action: action,
+		HostID: h.ID, HostName: h.Name, Target: fmt.Sprintf("%s:%d", h.Dest(), h.Port), Command: command})
+	if err != nil {
+		fail(w, http.StatusServiceUnavailable, err)
+		return nil
+	}
+	return end
+}
+
+func exitOf(err error) int {
+	if err != nil {
+		return -1
+	}
+	return 0
+}
+
+// logOut is where the server says what it runs
+var logOut io.Writer = os.Stderr
 
 // uploadMax bounds an upload body
 const uploadMax = 100 << 20
@@ -42,14 +81,14 @@ type Server struct {
 
 // New makes the API for store
 func New(store *app.Store, opts Options) *Server {
-	a := &api{store: store, opts: opts, tunnels: map[string]*tunnel{}}
+	a := &api{store: store, opts: opts, tunnels: map[string]*tunnel{}, slots: make(chan struct{}, maxRunning)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/hosts", a.listHosts)
 	mux.HandleFunc("POST /v1/hosts", a.addHost)
 	mux.HandleFunc("GET /v1/hosts/{host}", a.getHost)
 	mux.HandleFunc("DELETE /v1/hosts/{host}", a.deleteHost)
 	mux.HandleFunc("GET /v1/hosts/{host}/connect", a.connect)
-	mux.HandleFunc("POST /v1/hosts/{host}/upload", a.upload)
+	mux.HandleFunc("POST /v1/hosts/{host}/upload", a.limit(a.upload))
 	mux.HandleFunc("POST /v1/hosts/{host}/run", a.run)
 	mux.HandleFunc("POST /v1/hosts/{host}/tunnels", a.openTunnel)
 	mux.HandleFunc("GET /v1/tunnels", a.listTunnels)
@@ -73,6 +112,45 @@ type api struct {
 	// tunnels are ssh -N processes started through the API, they live as
 	// long as the server
 	tunnels map[string]*tunnel
+	slots   chan struct{}
+}
+
+// maxRunning is how many uploads, commands and tunnel starts run at once,
+// as in sshr mcp, an upload holds its body in memory and a burst of them
+// would take gigabytes
+const maxRunning = 8
+
+// limit runs next in a free slot, for an upload whose body is held in
+// memory, the slot comes before the body is read
+func (a *api) limit(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		release, ok := a.take(w, r)
+		if !ok {
+			return
+		}
+		defer release()
+		next(w, r)
+	}
+}
+
+// take waits for a free slot until the client goes away and answers 503
+// itself when it does, a client gone while it waited does not get its
+// action run, commands and tunnels take it after their small body is read
+// so a stalled body holds no slot
+func (a *api) take(w http.ResponseWriter, r *http.Request) (func(), bool) {
+	select {
+	case a.slots <- struct{}{}:
+	case <-r.Context().Done():
+		fail(w, http.StatusServiceUnavailable, errors.New("too many uploads and commands at once"))
+		return nil, false
+	}
+	release := func() { <-a.slots }
+	if r.Context().Err() != nil {
+		release()
+		fail(w, http.StatusServiceUnavailable, errors.New("the client went away while it waited"))
+		return nil, false
+	}
+	return release, true
 }
 
 // guard checks the token and refuses requests a browser page could send:
@@ -88,7 +166,7 @@ func (a *api) guard(next http.Handler) http.Handler {
 			if h, _, err := net.SplitHostPort(host); err == nil {
 				host = h
 			}
-			if host != "localhost" && net.ParseIP(host) == nil {
+			if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
 				fail(w, http.StatusForbidden, errors.New("connect to 127.0.0.1 or localhost"))
 				return
 			}
@@ -213,11 +291,17 @@ func (a *api) addHost(w http.ResponseWriter, r *http.Request) {
 		}
 		h.Forwards = fs
 	}
+	end := a.begin(w, r, "add_host", &h, "")
+	if end == nil {
+		return
+	}
 	saved, err := a.store.Add(h)
 	if err != nil {
+		end(-1, 0, err)
 		fail(w, http.StatusBadRequest, err)
 		return
 	}
+	end(0, 0, nil)
 	reply(w, http.StatusCreated, saved.Summary())
 }
 
@@ -226,7 +310,13 @@ func (a *api) deleteHost(w http.ResponseWriter, r *http.Request) {
 	if h == nil {
 		return
 	}
-	if err := a.store.Delete(h.ID); err != nil {
+	end := a.begin(w, r, "delete_host", h, "")
+	if end == nil {
+		return
+	}
+	err := a.store.Delete(h.ID)
+	end(exitOf(err), 0, err)
+	if err != nil {
 		fail(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -272,7 +362,12 @@ func (a *api) upload(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	end := a.begin(w, r, "upload", h, "")
+	if end == nil {
+		return
+	}
 	remote, err := a.store.UploadImage(h, data, ext, true)
+	end(exitOf(err), int64(len(data)), err)
 	if err != nil {
 		fail(w, http.StatusBadGateway, err)
 		return
@@ -285,9 +380,19 @@ func (a *api) run(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusForbidden, errors.New("commands are off, start sshr serve with --allow-commands or set api_commands"))
 		return
 	}
+	if a.opts.ConfirmCommands {
+		fail(w, http.StatusForbidden, errors.New("commands ask for confirmation (confirm_commands) and the REST API cannot ask, run it in a terminal or through an MCP client that can"))
+		return
+	}
 	h := a.findHost(w, r)
 	if h == nil {
 		return
+	}
+	if a.opts.CommandsAllowed != nil {
+		if err := a.opts.CommandsAllowed(h); err != nil {
+			fail(w, http.StatusForbidden, err)
+			return
+		}
 	}
 	var in struct {
 		Command        string `json:"command"`
@@ -303,12 +408,25 @@ func (a *api) run(w http.ResponseWriter, r *http.Request) {
 	if in.TimeoutSeconds > 600 {
 		in.TimeoutSeconds = 600
 	}
-	fmt.Fprintf(os.Stderr, "sshr serve: run on %s: %s\n", h.Name, in.Command)
+	// quoted, a carriage return or an escape sequence in the command cannot
+	// rewrite lines in the terminal or log
+	release, ok := a.take(w, r)
+	if !ok {
+		return
+	}
+	defer release()
+	fmt.Fprintf(logOut, "sshr serve: run on %q: %q\n", h.Name, in.Command)
+	end := a.begin(w, r, "run", h, in.Command)
+	if end == nil {
+		return
+	}
 	res, err := a.store.RunRemote(h, in.Command, nil, time.Duration(in.TimeoutSeconds)*time.Second)
 	if err != nil {
+		end(-1, 0, err)
 		fail(w, http.StatusBadGateway, err)
 		return
 	}
+	end(res.ExitCode, int64(len(res.Stdout)+len(res.Stderr)), nil)
 	reply(w, http.StatusOK, map[string]any{
 		"host": h.Name, "exit_code": res.ExitCode,
 		"stdout": string(res.Stdout), "stderr": string(res.Stderr), "truncated": res.Truncated,
@@ -345,6 +463,11 @@ func (a *api) openTunnel(w http.ResponseWriter, r *http.Request) {
 	if len(in.Forwards) == 0 {
 		in.Forwards = []string{"all"}
 	}
+	release, ok := a.take(w, r)
+	if !ok {
+		return
+	}
+	defer release()
 	fs, err := app.FindForwards(h.Forwards, in.Forwards)
 	if err != nil || len(fs) == 0 {
 		if err == nil {
@@ -369,8 +492,14 @@ func (a *api) openTunnel(w http.ResponseWriter, r *http.Request) {
 	}
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
+	end := a.begin(w, r, "open_tunnel", h, "")
+	if end == nil {
+		stop()
+		return
+	}
 	if err := cmd.Start(); err != nil {
 		stop()
+		end(-1, 0, err)
 		fail(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -378,7 +507,9 @@ func (a *api) openTunnel(w http.ResponseWriter, r *http.Request) {
 	t.cmd, t.stop = cmd, stop
 	done := make(chan struct{})
 	go func() {
-		cmd.Wait()
+		// the end record is the end of the tunnel, not of the request
+		werr := cmd.Wait()
+		end(cmd.ProcessState.ExitCode(), 0, werr)
 		stop()
 		a.mu.Lock()
 		delete(a.tunnels, t.ID)
@@ -424,6 +555,15 @@ func (a *api) closeTunnel(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusNotFound, errors.New("no such tunnel"))
 		return
 	}
-	t.cmd.Process.Kill()
+	end := a.begin(w, r, "close_tunnel", &app.Host{Name: t.Host}, "")
+	if end == nil {
+		return
+	}
+	err := t.cmd.Process.Kill()
+	end(exitOf(err), 0, err)
+	if err != nil {
+		fail(w, http.StatusInternalServerError, fmt.Errorf("the tunnel did not stop: %v", err))
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }

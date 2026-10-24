@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -317,5 +318,59 @@ func TestOrphanBlobsKeptADay(t *testing.T) {
 		if (err == nil) != want {
 			t.Errorf("blob %s kept = %v, want %v", h[:8], err == nil, want)
 		}
+	}
+}
+
+// /v1/health answers 200 while the data folder can be written, 503 when
+// it cannot (#149)
+func TestHealth(t *testing.T) {
+	dir := t.TempDir()
+	srv, err := New(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest("GET", "/v1/health", nil))
+	if rec.Code != 200 {
+		t.Fatalf("health = %d %s", rec.Code, rec.Body)
+	}
+	if runtime.GOOS == "windows" || os.Getuid() == 0 {
+		return
+	}
+	os.Chmod(dir, 0o500)
+	t.Cleanup(func() { os.Chmod(dir, 0o700) })
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest("GET", "/v1/health", nil))
+	if rec.Code != 503 {
+		t.Fatalf("health of a read-only folder = %d", rec.Code)
+	}
+}
+
+// an account that holds MaxAccountBytes takes no new blob, a blob it
+// already has can be sent again (#149)
+func TestAccountQuota(t *testing.T) {
+	srv, _, a, c1 := newAccount(t)
+	put := func(data string) int {
+		sum := sha256.Sum256([]byte(data))
+		code, _, _ := c1.do("PUT", a+"/blobs/"+hex.EncodeToString(sum[:]), []byte(data), nil)
+		return code
+	}
+	if code := put("first"); code != 204 {
+		t.Fatalf("put = %d", code)
+	}
+	acc := strings.TrimPrefix(a, "/v1/accounts/")
+	big := filepath.Join(srv.accountDir(acc), "blobs", strings.Repeat("a", 64))
+	f, err := os.Create(big)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// a sparse file takes no disk but counts with its size
+	f.Truncate(syncproto.MaxAccountBytes)
+	f.Close()
+	if code := put("second"); code != http.StatusInsufficientStorage {
+		t.Fatalf("a full account took a blob: %d", code)
+	}
+	if code := put("first"); code != 204 {
+		t.Fatalf("a blob already stored was refused: %d", code)
 	}
 }

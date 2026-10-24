@@ -12,18 +12,22 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"sshr.dev/internal/api"
 	"sshr.dev/internal/app"
+	"sshr.dev/internal/audit"
 )
 
-const serveUsage = "Usage: sshr serve [--listen unix:<path>|127.0.0.1:<port>] [--allow-commands|--no-commands]"
+const serveUsage = "Usage: sshr serve [--listen unix:<path>|127.0.0.1:<port>] [--allow-commands|--no-commands] [--listed-hosts-only|--all-hosts] [--audit|--no-audit]"
 
 // cmdServe runs the REST API until Ctrl+C or SIGTERM
 func cmdServe(store *app.Store, args []string) {
 	st, _ := app.LoadSettings()
-	opts := api.Options{AllowCommands: st.APICommands}
+	opts := api.Options{AllowCommands: st.APICommands, ConfirmCommands: st.ConfirmCommands}
 	listen := ""
+	auditOn := st.AuditLog
+	var listedOnly *bool
 	for i := 0; i < len(args); i++ {
 		switch a := args[i]; {
 		case a == "--listen" && i+1 < len(args):
@@ -35,18 +39,31 @@ func cmdServe(store *app.Store, args []string) {
 			opts.AllowCommands = true
 		case a == "--no-commands":
 			opts.AllowCommands = false
+		case a == "--listed-hosts-only" || a == "--all-hosts":
+			only := a == "--listed-hosts-only"
+			listedOnly = &only
+		case a == "--audit":
+			auditOn = true
+		case a == "--no-audit":
+			auditOn = false
 		default:
 			fmt.Fprintln(os.Stderr, serveUsage)
 			os.Exit(1)
 		}
 	}
+	opts.Audit, opts.Client = openAudit(st, auditOn), peerName
+	opts.CommandsAllowed = commandPolicy(store, listedOnly)
 	ln, where, err := apiListener(listen, &opts)
 	if err != nil {
 		fatal(err)
 	}
 	srv := api.New(store, opts)
 	defer srv.Close()
-	hs := &http.Server{Handler: srv}
+	// a client that never finishes its headers does not keep a connection
+	hs := &http.Server{Handler: peerGuard(srv), ConnContext: peerContext, ReadHeaderTimeout: 10 * time.Second,
+		// an upload of 100 MiB takes well under a second on loopback, a body
+		// that stalls longer does not keep its slot
+		ReadTimeout: 2 * time.Minute}
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	go func() {
@@ -84,11 +101,10 @@ func apiListener(listen string, opts *api.Options) (net.Listener, string, error)
 		if err := removeStaleSocket(path); err != nil {
 			return nil, "", err
 		}
-		ln, err := net.Listen("unix", path)
+		ln, err := listenPrivate(path)
 		if err != nil {
 			return nil, "", err
 		}
-		os.Chmod(path, 0o600)
 		return ln, "unix:" + path, nil
 	}
 	host, _, err := net.SplitHostPort(listen)
@@ -148,4 +164,21 @@ func removeStaleSocket(path string) error {
 		return fmt.Errorf("%s exists and is not a socket, choose another path", path)
 	}
 	return os.Remove(path)
+}
+
+// openAudit opens the audit log when it is on, sshr does not start without
+// a log it was asked to keep
+func openAudit(st app.Settings, on bool) *audit.Log {
+	if !on {
+		return nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fatal(err)
+	}
+	l, err := audit.Open(filepath.Join(home, ".sshr"), st.AuditMaxMB, st.AuditCommands == "full")
+	if err != nil {
+		fatal(err)
+	}
+	return l
 }

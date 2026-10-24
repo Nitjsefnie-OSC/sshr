@@ -24,6 +24,7 @@ import (
 	"time"
 	"unicode"
 
+	"sshr.dev/internal/fileio"
 	"sshr.dev/internal/syncproto"
 )
 
@@ -61,6 +62,7 @@ func New(dir string) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{dir: dir, mux: http.NewServeMux(), locks: map[string]*sync.Mutex{}, creates: map[string][]time.Time{}}
+	s.mux.HandleFunc("GET /v1/health", s.health)
 	s.mux.HandleFunc("POST /v1/accounts", s.newAccount)
 	s.mux.HandleFunc("POST /v1/accounts/{a}/join", s.join)
 	s.mux.HandleFunc("GET /v1/accounts/{a}/devices", s.auth(s.listDevices))
@@ -77,6 +79,19 @@ func New(dir string) (*Server, error) {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
+
+// health answers a monitor: 200 while the data folder can be written,
+// 503 when it cannot, nothing about accounts
+func (s *Server) health(w http.ResponseWriter, r *http.Request) {
+	f, err := os.CreateTemp(s.dir, ".health-*")
+	if err != nil {
+		fail(w, http.StatusServiceUnavailable, "the data folder cannot be written")
+		return
+	}
+	f.Close()
+	os.Remove(f.Name())
+	reply(w, http.StatusOK, map[string]bool{"ok": true})
+}
 
 func reply(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -175,30 +190,7 @@ func (s *Server) saveDevices(a string, ds []deviceFile) error {
 // writeFile replaces path through a temp file of its own and a rename, two
 // requests writing the same file never share a temp file
 func writeFile(path string, data []byte) error {
-	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	_, err = f.Write(data)
-	// the data reaches the disk before the rename does, a power loss
-	// leaves the old file or the new one, never an empty one
-	if err == nil {
-		err = f.Sync()
-	}
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	if err == nil {
-		err = os.Chmod(tmp, 0o600)
-	}
-	if err == nil {
-		err = os.Rename(tmp, path)
-	}
-	if err != nil {
-		os.Remove(tmp)
-	}
-	return err
+	return fileio.WriteFile(path, data, 0o600)
 }
 
 func newToken() (token, hash string, err error) {
@@ -423,12 +415,38 @@ func (s *Server) putBlob(w http.ResponseWriter, r *http.Request, _ ctxDevice) {
 		fail(w, http.StatusBadRequest, "hash does not match the body")
 		return
 	}
+	path := filepath.Join(s.accountDir(a), "blobs", h)
+	// one account does not fill the disk of the server, a blob already
+	// stored costs nothing again
+	if _, err := os.Stat(path); err != nil {
+		if n, size := blobUsage(filepath.Dir(path)); n+1 > syncproto.MaxAccountBlobs || size+int64(len(data)) > syncproto.MaxAccountBytes {
+			fail(w, http.StatusInsufficientStorage, fmt.Sprintf("the account is full (%d blobs, %d MiB), the server keeps at most %d blobs and %d MiB per account", n, size>>20, syncproto.MaxAccountBlobs, syncproto.MaxAccountBytes>>20))
+			return
+		}
+	}
 	// blobs are content-addressed, writing one twice is harmless
-	if err := writeFile(filepath.Join(s.accountDir(a), "blobs", h), data); err != nil {
+	if err := writeFile(path, data); err != nil {
 		fail(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// blobUsage counts the blobs in dir and their bytes
+func blobUsage(dir string) (int, int64) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, 0
+	}
+	var n int
+	var size int64
+	for _, e := range entries {
+		if fi, err := e.Info(); err == nil && fi.Mode().IsRegular() && hashPattern.MatchString(e.Name()) {
+			n++
+			size += fi.Size()
+		}
+	}
+	return n, size
 }
 
 func (s *Server) getBlob(w http.ResponseWriter, r *http.Request, _ ctxDevice) {

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // ErrAsksPassword means the host asks for its password every time and there
@@ -39,14 +40,6 @@ func SSHArgs(h *Host) []string {
 		}
 	}
 	return append(args, "-p", strconv.Itoa(h.Port))
-}
-
-// Dest is the user@host argument for ssh.
-func (h *Host) Dest() string {
-	if h.User == "" {
-		return h.Host
-	}
-	return h.User + "@" + h.Host
 }
 
 // UploadImage copies data to ~/.cache/sshr/pasted/ on the host over a
@@ -114,8 +107,13 @@ func (s *Store) UploadImage(h *Host, data []byte, ext string, batch bool) (strin
 	}
 	defer cleanup()
 	err = cmd.Run()
-	remote := strings.TrimSpace(stdout.String())
-	if err == nil && strings.HasPrefix(remote, "/") {
+	// the path is the last line and must be the file the script wrote, a
+	// login script or a hostile server may print more, that is not handed
+	// on as the answer
+	out := strings.Split(strings.TrimSpace(stdout.String()), "\n")
+	remote := strings.TrimSpace(out[len(out)-1])
+	if err == nil && len(remote) <= uploadPathMax && strings.HasPrefix(remote, "/") &&
+		strings.HasSuffix(remote, "/.cache/sshr/pasted/"+name) && strings.IndexFunc(remote, unicode.IsControl) < 0 {
 		return remote, nil
 	}
 	msg := strings.TrimSpace(stderr.String())
@@ -125,10 +123,14 @@ func (s *Store) UploadImage(h *Host, data []byte, ext string, batch bool) (strin
 	} else if err != nil {
 		msg = err.Error()
 	} else {
-		msg = "server returned no path (is sh available there?)"
+		msg = "server returned no path of the uploaded file (is sh available there?)"
 	}
 	return "", fmt.Errorf("upload to %s failed: %s", h.Name, msg)
 }
+
+// uploadPathMax caps the path a server answers, a home folder is short,
+// a long answer carries something else before the file name
+const uploadPathMax = 512
 
 // uploadExtRe is what an upload's file extension may be
 var uploadExtRe = regexp.MustCompile(`^[a-z0-9]{1,10}$`)

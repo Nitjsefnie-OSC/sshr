@@ -50,6 +50,19 @@ sshr add db.example.com -u admin --ask-password   # nothing saved, ssh asks ever
 - no keychain (a server without a desktop, a keyring nobody unlocks within 5 s): a saved password cannot be added, ask mode and keys still work
 - a reset keychain or `~/.sshr` copied to another machine makes the password unreadable and sshr asks to save it again, plain `"password"` fields from older versions are encrypted on the next save
 
+### Without a system keychain
+
+```sh
+sshr vault passphrase    # move the vault key into a file under a passphrase
+sshr vault status        # keychain or passphrase
+sshr vault keychain      # back to the system keychain, the file is removed
+```
+
+- the vault key that seals saved passwords and stored keys lives in the system keychain, on a server or a machine without one `passphrase` wraps it into `~/.sshr/vault/vault-key.json` with Argon2id, the key stays the same, so everything saved before still opens
+- off by default: the passphrase is asked once per run, a forgotten one loses every saved secret, the file can be attacked offline with a weak passphrase (8 characters at least)
+- it is asked on the terminal, or from the program in `SSHR_ASKPASS`, `sshr mcp` never asks on its terminal, `SSHR_VAULT=keychain|passphrase` picks the mode for one run
+- the keys of the sync device move along into `~/.sshr/vault/secrets.json`, each sealed with the vault key, so a machine without a keychain syncs too, `keychain` moves them back
+
 ## Keys stored in sshr
 
 ```sh
@@ -243,7 +256,10 @@ sshr sync leave                                                  # stop syncing 
 - a host changed on two devices keeps both, the other one as `<name> (conflict <device> <date>)`, a host removed on one device and changed on another comes back with the change, the log says so
 - a host whose saved password does not open here, or one this sshr cannot read, is left out and named, the other hosts still sync, `sshr sync` then ends with "N hosts left out" and exit code 1
 - `leave` first delivers a vault key this device changed and has not handed to the others yet, `--force` leaves without it, then the others pair again
-- limits: sync runs when you call it, the server sees the host count, push times, addresses and device names and can hold back changes, a new device trusts the first state it sees (`--accept-reset` after a real server restore), compare the `sshr sync status` fingerprints to be sure two devices see the same history, a removed device keeps what it downloaded
+- an S3 bucket instead of sshr-sync: `sshr sync init --backend s3 --endpoint https://<account>.r2.cloudflarestorage.com --bucket sshr --key-id <id> --name laptop`, `--prefix` keeps several accounts in one bucket, `--region` defaults to `auto`, the secret key comes from `SSHR_S3_SECRET` or a prompt and is kept in the keychain, `sshr sync invite` prints the join flags without it, pass the secret to the new device yourself, the endpoint has to be HTTPS without a user or password in it (plain HTTP only to a loopback address such as 127.0.0.1, also when the sync state is edited), setup checks that the bucket refuses a second create of one name, see SECURITY.md for what a shared bucket key allows, after `remove-device` make a new bucket key, delete the old one and run `sshr sync store-key --key-id <new id>` on every device that stays, it keeps the bucket and checks that the new key reads the account and the vault key of this device before it saves it, the key needs read, write, list and delete on the whole prefix of the account
+- a WebDAV folder instead: `sshr sync init --backend webdav --url https://cloud.example/remote.php/dav/files/<user>/sshr --user <user> --name laptop`, the password (in Nextcloud an app password) comes from `SSHR_WEBDAV_PASSWORD` or a prompt and is kept in the keychain, setup checks that the server refuses a second create of one name, works with Nextcloud and ownCloud 10 with file locking on (the default), Apache mod_dav passes the check but two devices pushing at the same moment can lose a change there, OCIS, nginx, rclone, Caddy and dufs are refused, a redirect is an error, give the address the server redirects to, after `remove-device` change the password and run `sshr sync store-key` on every device that stays, with the same `--user <name>` on each if the user changes too
+- a Supabase project instead: `sshr sync supabase-sql > setup.sql` prints the SQL and once the sshr key of the account (keep it in a password manager, every device needs it), run the SQL in the SQL editor of the project, then `sshr sync init --backend supabase --url https://<ref>.supabase.co --key <publishable key> --name laptop`, the sshr key comes from `SSHR_SUPABASE_KEY` or a prompt and is kept in the keychain, a secret (`sb_secret_`) or service_role key is refused, `sshr sync invite` prints the join flags without the sshr key, a free project sleeps after a week without requests and sshr says so, resume it in the dashboard, after `remove-device` run `sshr sync supabase-sql --replace`, run its SQL, then `sshr sync store-key` with the new key on every device that stays, change or unset `SSHR_SUPABASE_KEY` wherever it holds the old key, sshr takes the variable before it asks, the test of the SQL on a real database needs `postgresql_17` and `postgrest` (`go test -run TestReal ./internal/supastore/`)
+- limits: sync runs when you call it, the server sees the host count, push times, addresses and device names and can hold back changes, a new device trusts the first state it sees (`--accept-reset` after a real server restore), compare the `sshr sync status` fingerprints to be sure two devices see the same history, a removed device keeps what it downloaded, the server and a bucket keep the last 1000 changes, a device further behind has to leave and join again
 
 ## Sync server
 
@@ -255,11 +271,18 @@ sshr-sync --plain-http --listen 127.0.0.1:8080 --data ./data                    
 sshr-sync --plain-http --trust-proxy --listen 127.0.0.1:8080 --data ./data       # the proxy sets X-Forwarded-For
 ```
 
-TLS 1.3 only, plain HTTP only on loopback, one token per device (only its SHA-256 is stored), 10 new accounts or joins an hour per address, behind a proxy every client has the proxy's address unless `--trust-proxy` takes the last `X-Forwarded-For` entry of requests from this machine (off by default, the proxy must set that header), pushes are compare-and-swap so two devices cannot overwrite each other, unused blobs go after a day, one server per data folder
+TLS 1.3 only, plain HTTP only on loopback, one token per device (only its SHA-256 is stored), 10 new accounts or joins an hour per address, behind a proxy every client has the proxy's address unless `--trust-proxy` takes the last `X-Forwarded-For` entry of requests from this machine (off by default, the proxy must set that header), pushes are compare-and-swap so two devices cannot overwrite each other, unused blobs go after a day, an account holds at most 20000 blobs and 256 MiB (507 after that), one server per data folder
+
+`GET /v1/health` answers 200 while the data folder can be written and 503 when it cannot, for a monitor, it needs no token and tells nothing about accounts
+
+Backups: everything is in the data folder, `accounts/<id>/devices.json` (devices and token hashes), `blobs/` (encrypted hosts), `manifests/` (the signed history) and `envelopes/` (the vault key for each device), plus the TLS cache of `--autocert`. It holds no plaintext and no key that opens the hosts, a copy can sit anywhere. Stop sshr-sync or take a filesystem snapshot for the copy, a copy made file by file while devices push can hold a manifest whose blobs are missing. Restore only the newest copy: a device refuses a history older than the one it already saw, so after an old copy is restored the devices stop syncing until the account is set up again, the hosts themselves stay on every device
 
 ## Extensions
 
 ```sh
+sshr ext community on                                        # turns the catalog on after a notice, off by default
+sshr ext search remmina                                      # lists the community catalog
+sshr ext install remmina                                     # from the catalog, at the commit it names
 sshr ext install https://github.com/someone/sshr-hello.git   # shows what it is and asks
 sshr ext install ./my-extension --yes                        # a folder, no question, for scripts
 sshr hello a b                                               # runs the extension called hello
@@ -267,6 +290,8 @@ sshr ext import remmina                                      # an extension that
 sshr ext list
 sshr ext remove hello
 ```
+
+The catalog is off until `sshr ext community on` (`sshr ext community off` turns it off again, installed extensions stay). It is a JSON file at `ext_catalog` in `~/.sshr/settings.json`, by default the community one, `extensions/catalog.json` in the sshr repository (`https://raw.githubusercontent.com/klovbin/sshr/main/extensions/catalog.json`). To add your extension, open a pull request that adds an entry there, the test of the repository checks its shape, nobody reviews its code, each entry has a name, an https git address, a full commit hash, a description, an author and kinds, an entry of a wrong shape or a name listed twice is left out with a warning, a folder here with the same name as a catalog entry is installed as a folder. A company can serve its own file over HTTPS, the format is `{"version":1,"extensions":[{"name":"hello","url":"https://…/hello.git","commit":"<40 hex>","description":"…","author":"…","kinds":["command"]}]}`. Nobody reviews the code of catalog extensions, an entry is checked for its shape only.
 
 A working one to copy from is `examples/extensions/hello` (`sshr ext install ./examples/extensions/hello`). Importers that come with sshr are in `extensions/`, `extensions/remmina` reads the SSH profiles of Remmina (`~/.local/share/remmina/*.remmina`, or the folders you pass), Remmina keeps passwords in the keyring, so a host comes without its password and logs in as ssh does by default, install it from a clone with `sshr ext install ./extensions/remmina`. `extensions/putty` reads the saved sessions of PuTTY on Linux and macOS where PuTTY keeps them (`~/.config/putty/sessions` or `~/.putty/sessions`, `$PUTTYSESSIONS` and `$PUTTYDIR` count), an SSH proxy of a session becomes a jump host, a `.ppk` key is left out with the `puttygen` command that converts it, PuTTY saves no passwords. An extension is a folder with a manifest `sshr-ext.json` and the program it runs:
 
@@ -311,6 +336,10 @@ Other clients: `{"mcpServers": {"sshr": {"command": "sshr", "args": ["mcp"]}}}`
 - `run_command` is off by default (`--allow-commands` or `"mcp_commands": true`), it is marked destructive so clients ask before each call
 - secrets never leave sshr, hosts that ask for a password cannot be used, nothing listens (stdin and stdout of a child process), every command is logged to stderr
 
+- `--confirm-commands` (or `"confirm_commands": true`) asks before each `run_command` through a question the client shows, it runs only after a yes, a client that cannot show questions gets commands refused, `sshr serve` refuses commands while it is set
+- `sshr commands only` limits `run_command` to the hosts of `sshr commands allow <host>` (`"commands_listed_only": true`, `--listed-hosts-only` for one run), a host that points elsewhere since it was allowed is refused until it is allowed again, `sshr commands all` and `--all-hosts` go back to every host
+- `--audit` (or `"audit_log": true`) keeps `~/.sshr/audit.jsonl`: a JSON line at the start and at the end of each upload and command, with the client, the host and the exit code, a command as its length, first word and a keyed hash (`"audit_commands": "full"` keeps it whole), the file moves to `audit.jsonl.1` at `audit_max_mb` (10) and five old files stay, an action whose start cannot be written is refused
+
 Setup for each client, every tool with its limits, the log and troubleshooting: [MCP.md](MCP.md)
 
 ## REST API
@@ -331,5 +360,7 @@ curl -H "Authorization: Bearer $(cat ~/.sshr/api-token)" http://127.0.0.1:7522/v
 | `POST /v1/hosts/{host}/upload?ext=png` | the body is the file, returns its remote path, removed after 15 minutes |
 | `POST /v1/hosts/{host}/run` | `{"command", "timeout_seconds"}`, off by default (`--allow-commands`, `"api_commands": true`) |
 | `POST /v1/hosts/{host}/tunnels`, `GET /v1/tunnels`, `DELETE /v1/tunnels/{id}` | open saved forwards, list, close |
+
+`--audit` writes host changes, uploads, runs and tunnels to the same `~/.sshr/audit.jsonl` as `sshr mcp`, the client is the uid on the socket or the address on a port
 
 Never listens on the network (`127.0.0.1`, `::1`, `localhost` only), the socket is 0600 in a 0700 folder, a port needs the token, requests with an `Origin` (web pages) or a non-loopback `Host` (DNS rebinding) are refused, passwords, keys and references are never returned or accepted

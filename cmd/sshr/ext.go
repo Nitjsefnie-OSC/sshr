@@ -35,7 +35,7 @@ func isBuiltinCommand(name string) bool {
 // cmdExt installs, imports with, lists and removes extensions
 func cmdExt(store *app.Store, args []string) {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "Usage: sshr ext install <git url or folder> [--yes] | sshr ext import <name> [args...] | sshr ext list | sshr ext remove <name>")
+		fmt.Fprintln(os.Stderr, "Usage: sshr ext community [on|off] | sshr ext search [words] | sshr ext install <name, git url or folder> [--yes] | sshr ext import <name> [args...] | sshr ext list | sshr ext remove <name>")
 		os.Exit(1)
 	}
 	reg, err := ext.DefaultRegistry()
@@ -43,6 +43,10 @@ func cmdExt(store *app.Store, args []string) {
 		fatal(err)
 	}
 	switch args[0] {
+	case "community":
+		extCommunity(args[1:])
+	case "search":
+		extSearch(args[1:])
 	case "install":
 		extInstall(reg, args[1:])
 	case "import":
@@ -66,7 +70,7 @@ func cmdExt(store *app.Store, args []string) {
 		}
 		fmt.Printf("Removed extension %s\n", args[1])
 	default:
-		fmt.Fprintf(os.Stderr, "sshr ext: unknown command %q, use install, import, list or remove\n", args[0])
+		fmt.Fprintf(os.Stderr, "sshr ext: unknown command %q, use community, search, install, import, list or remove\n", args[0])
 		os.Exit(1)
 	}
 }
@@ -83,15 +87,22 @@ func extInstall(reg *ext.Registry, args []string) {
 		case source == "" && !strings.HasPrefix(a, "-"):
 			source = a
 		default:
-			fmt.Fprintln(os.Stderr, "Usage: sshr ext install <git url or folder> [--yes]")
+			fmt.Fprintln(os.Stderr, "Usage: sshr ext install <name, git url or folder> [--yes]")
 			os.Exit(1)
 		}
 	}
 	if source == "" {
-		fmt.Fprintln(os.Stderr, "Usage: sshr ext install <git url or folder> [--yes]")
+		fmt.Fprintln(os.Stderr, "Usage: sshr ext install <name, git url or folder> [--yes]")
 		os.Exit(1)
 	}
-	st, err := ext.Prepare(source)
+	var st *ext.Staged
+	var err error
+	entry, fromCatalog := catalogEntry(source)
+	if fromCatalog {
+		st, err = ext.PrepareAt(entry.URL, entry.Commit)
+	} else {
+		st, err = ext.Prepare(source)
+	}
 	if err != nil {
 		fatal(err)
 	}
@@ -104,6 +115,9 @@ func extInstall(reg *ext.Registry, args []string) {
 	if isBuiltinCommand(st.Name) {
 		die(fmt.Errorf("%s is a command of sshr, an extension cannot have that name", st.Name))
 	}
+	if fromCatalog && st.Name != entry.Name {
+		die(fmt.Errorf("the catalog entry %s points at an extension called %s, nothing is installed", entry.Name, st.Name))
+	}
 	argv, _ := st.Argv(runtime.GOOS)
 	fmt.Printf("Extension %s %s\n", st.Name, st.Version)
 	fmt.Printf("  does:   %s\n", st.Description)
@@ -113,16 +127,28 @@ func extInstall(reg *ext.Registry, args []string) {
 	} else {
 		fmt.Printf("  runs:   nothing on %s, it has no command for this system\n", runtime.GOOS)
 	}
-	from := st.Lock.Source
+	from := ext.CleanText(st.Lock.Source, 300)
 	if st.Lock.Commit != "" {
 		from += " at " + st.Lock.Commit
 	}
 	fmt.Printf("  from:   %s\n", from)
+	if note := localFolderNote(source); note != "" {
+		fmt.Printf("  note:   %s\n", note)
+	}
 	fmt.Printf("  files:  %d, hash %s\n", st.Files, st.Lock.Tree[:16])
 	if old, err := reg.Find(st.Name); err == nil {
-		fmt.Printf("  it replaces version %s, installed from %s\n", old.Version, old.Lock.Source)
+		fmt.Printf("  it replaces version %s, installed from %s\n", old.Version, ext.CleanText(old.Lock.Source, 300))
+	} else if !errors.Is(err, ext.ErrNotInstalled) {
+		fmt.Printf("  it replaces an installed copy that does not load: %s\n", ext.CleanText(err.Error(), 300))
+	}
+	if fromCatalog {
+		fmt.Printf("  author: %s (catalog %s)\n", entry.Author, catalogURL())
 	}
 	fmt.Println()
+	if fromCatalog {
+		fmt.Println("This extension comes from the community catalog. Its author wrote it, the sshr authors")
+		fmt.Println("do not review its code and take no responsibility for what it does.")
+	}
 	fmt.Println("An extension runs as you and can do anything you can do. sshr gives it no password,")
 	fmt.Println("key or secret reference, but it is a program on your machine, read its code first.")
 	if !yes {
@@ -272,4 +298,116 @@ func exitCodeOf(err error) int {
 		return exit.ExitCode()
 	}
 	return 1
+}
+
+// catalogURL is the catalog settings name, the community one when unset
+func catalogURL() string {
+	if st, err := app.LoadSettings(); err == nil && st.ExtCatalog != "" {
+		return st.ExtCatalog
+	}
+	return ext.DefaultCatalog
+}
+
+// communityNotice is said when the catalog is turned on, as Obsidian does
+// before community plugins
+const communityNotice = `Community extensions are written by their authors. The sshr authors do not
+review their code and take no responsibility for what they do. An extension
+runs as you and can read your files, reach the network and start programs.
+The catalog only checks that an entry is well formed. Install only what you
+trust, and read its code first.`
+
+// extCommunity turns the catalog on or off, or says whether it is on
+func extCommunity(args []string) {
+	st, err := app.LoadSettings()
+	if err != nil {
+		fatal(err)
+	}
+	switch {
+	case len(args) == 0:
+		if st.ExtCommunity {
+			fmt.Printf("Community extensions are on, the catalog is %s\n", catalogURL())
+		} else {
+			fmt.Println("Community extensions are off, sshr ext community on turns them on")
+		}
+		return
+	case len(args) == 1 && args[0] == "on":
+		st.ExtCommunity = true
+	case len(args) == 1 && args[0] == "off":
+		st.ExtCommunity = false
+	default:
+		fmt.Fprintln(os.Stderr, "Usage: sshr ext community [on|off]")
+		os.Exit(1)
+	}
+	if err := app.SaveSettings(st); err != nil {
+		fatal(err)
+	}
+	if st.ExtCommunity {
+		fmt.Println(communityNotice)
+		fmt.Println("\nCommunity extensions are on, sshr ext search lists them")
+	} else {
+		fmt.Println("Community extensions are off, the installed ones stay and run, sshr ext remove takes one out")
+	}
+}
+
+// fetchCatalog reads the catalog and prints the entries it left out, the
+// catalog is off until sshr ext community on
+func fetchCatalog() []ext.Entry {
+	if st, err := app.LoadSettings(); err != nil || !st.ExtCommunity {
+		fatal(errors.New("community extensions are off, sshr ext community on turns them on after a notice, an extension from a git address or a folder installs without them"))
+	}
+	entries, warnings, err := ext.FetchCatalog(catalogURL(), nil)
+	if err != nil {
+		fatal(err)
+	}
+	for _, w := range warnings {
+		fmt.Fprintf(os.Stderr, "sshr: %s\n", w)
+	}
+	return entries
+}
+
+// catalogEntry is the catalog entry an install of source means: a word that
+// is a valid extension name and neither a git address nor a folder here,
+// a folder of that name is installed as before
+func catalogEntry(source string) (ext.Entry, bool) {
+	if strings.HasPrefix(source, "-") || ext.CheckName(source) != nil {
+		return ext.Entry{}, false
+	}
+	// only a folder of that name wins, a plain file there must not make
+	// the catalog entry impossible to install from here
+	if info, err := os.Stat(source); err == nil && info.IsDir() {
+		return ext.Entry{}, false
+	}
+	entry, ok := ext.Lookup(fetchCatalog(), source)
+	if !ok {
+		fatal(fmt.Errorf("no extension %q in the catalog %s and no folder of that name here, sshr ext search lists the catalog", source, catalogURL()))
+	}
+	return entry, true
+}
+
+// extSearch lists the catalog entries that hold every word
+func extSearch(words []string) {
+	found := ext.Search(fetchCatalog(), words)
+	if len(found) == 0 {
+		fmt.Println("nothing in the catalog matches")
+		return
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	for _, e := range found {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", e.Name, strings.Join(e.Kinds, ","), e.Author, e.Description)
+	}
+	w.Flush()
+	fmt.Println("\nInstall one with sshr ext install <name>, nobody reviews the code of catalog extensions")
+}
+
+// localFolderNote says that a word which could be a catalog name was taken
+// as the folder of that name here, a folder planted in a downloaded tree
+// must not pass for the catalog entry
+func localFolderNote(source string) string {
+	if ext.CheckName(source) != nil {
+		return ""
+	}
+	if info, err := os.Stat(source); err != nil || !info.IsDir() {
+		return ""
+	}
+	return "this is the folder " + source + " in the current directory, not the catalog entry of that name, use ./" + source + " for a folder to make that plain"
 }

@@ -22,8 +22,11 @@ import (
 	"time"
 	"unicode"
 
-	"sshr.dev/internal/app"
+	"sshr.dev/internal/fileio"
+	"sshr.dev/internal/hosts"
+	"sshr.dev/internal/record"
 	"sshr.dev/internal/syncproto"
+	"sshr.dev/internal/vault"
 )
 
 func jsonMarshal(v any) ([]byte, error) { return json.Marshal(v) }
@@ -62,6 +65,8 @@ type state struct {
 	// not reached every kept device yet, the next sync delivers it
 	Rotation *rotation `json:"rotation,omitempty"`
 	LastSync time.Time `json:"last_sync"`
+	// Backend is the store of an account that is not sshr-sync
+	Backend *BackendRef `json:"backend,omitempty"`
 	// extra are the keys a newer sshr wrote, kept through every save
 	extra map[string]json.RawMessage
 }
@@ -91,7 +96,7 @@ type pushPlan struct {
 
 // Client syncs one Store
 type Client struct {
-	Store *app.Store
+	Store *hosts.Store
 	// Dir holds state.json, ~/.sshr/sync
 	Dir string
 	// KeyPrefix names the keychain entries of this device, tests give two
@@ -103,6 +108,15 @@ type Client struct {
 	// Log gets one line per notable event
 	Log  io.Writer
 	HTTP *http.Client
+	// Backend is the store the sync goes through, nil is sshr-sync over
+	// HTTP at the server of the state
+	Backend Backend
+	// BackendRef and StoreSecret name the store Init and Join set up and
+	// keep in the state and the keychain, OpenBackend opens it again on
+	// later runs
+	BackendRef  *BackendRef
+	StoreSecret string
+	OpenBackend func(ref BackendRef, secret string) (Backend, error)
 
 	st   *state
 	keys *deviceKeys
@@ -135,7 +149,7 @@ func (c *Client) run(fn func() error) error {
 	if err := os.MkdirAll(c.Dir, 0o700); err != nil {
 		return err
 	}
-	unlock, err := app.WaitLock(filepath.Join(c.Dir, "run.lock"), "running a sync", 0)
+	unlock, err := fileio.WaitLock(filepath.Join(c.Dir, "run.lock"), "running a sync", 0)
 	if err != nil {
 		return err
 	}
@@ -183,11 +197,49 @@ func (c *Client) prefix() string {
 
 func (c *Client) statePath() string { return filepath.Join(c.Dir, "state.json") }
 
+// errSetUp is the answer of init and join on a machine that already syncs
+var errSetUp = errors.New("sync is already set up here, see sshr sync status")
+
+// CheckFree fails when sync is already set up here, the CLI checks it
+// before it asks for the secret of a store and writes a probe into it
+func (c *Client) CheckFree() error {
+	if _, err := os.Stat(c.statePath()); err == nil {
+		return errSetUp
+	}
+	return nil
+}
+
+// SecretNames are the names of the secrets the sync of the default device
+// keeps (its key seed, the vault keys of every epoch, a key change still
+// to deliver), for moving them when the vault mode changes, a sync state
+// that exists and does not read is an error, the names of older epochs
+// would be missed
+func SecretNames(dir string) ([]string, error) {
+	names := []string{"sync-device", "sync-key-pending", "sync-store-secret"}
+	b, err := fileio.ReadFileShared(filepath.Join(dir, "state.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return names, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var st struct {
+		Epoch int `json:"epoch"`
+	}
+	if err := json.Unmarshal(b, &st); err != nil {
+		return nil, fmt.Errorf("the sync state does not read: %v", err)
+	}
+	for e := 1; e <= st.Epoch; e++ {
+		names = append(names, "sync-key-"+strconv.Itoa(e))
+	}
+	return names, nil
+}
+
 func (c *Client) load() error {
 	if c.st != nil {
 		return nil
 	}
-	b, err := app.ReadFileShared(c.statePath())
+	b, err := fileio.ReadFileShared(c.statePath())
 	if os.IsNotExist(err) {
 		return ErrNotSetUp
 	}
@@ -196,24 +248,24 @@ func (c *Client) load() error {
 	}
 	var st state
 	if err := json.Unmarshal(b, &st); err != nil {
-		if _, format, ferr := app.RecordExtra(b, reflect.TypeOf(state{})); ferr == nil && format > stateFormat {
-			return fmt.Errorf("%w: the sync state was written by a newer sshr (format %d), update sshr on this device to sync", app.ErrNewerFormat, format)
+		if _, format, ferr := record.Extra(b, reflect.TypeOf(state{})); ferr == nil && format > stateFormat {
+			return fmt.Errorf("%w: the sync state was written by a newer sshr (format %d), update sshr on this device to sync", record.ErrNewerFormat, format)
 		}
 		return fmt.Errorf("sync state %s is damaged: %v", c.statePath(), err)
 	}
 	var format int
-	if st.extra, format, err = app.RecordExtra(b, reflect.TypeOf(state{})); err != nil {
+	if st.extra, format, err = record.Extra(b, reflect.TypeOf(state{})); err != nil {
 		return fmt.Errorf("sync state %s is damaged: %v", c.statePath(), err)
 	}
 	if format > stateFormat {
 		// the state holds the counter and the head of the chain, a sync
 		// that does not understand it all would break the history
-		return fmt.Errorf("%w: the sync state was written by a newer sshr (format %d), update sshr on this device to sync", app.ErrNewerFormat, format)
+		return fmt.Errorf("%w: the sync state was written by a newer sshr (format %d), update sshr on this device to sync", record.ErrNewerFormat, format)
 	}
 	if st.Entries == nil {
 		st.Entries = map[string]entryState{}
 	}
-	seed, ok, err := app.SecretGet(c.prefix() + "device")
+	seed, ok, err := vault.SecretGet(c.prefix() + "device")
 	if err != nil {
 		return err
 	}
@@ -224,6 +276,10 @@ func (c *Client) load() error {
 		return err
 	}
 	c.st = &st
+	if err := c.openBackend(); err != nil {
+		c.st = nil
+		return err
+	}
 	return nil
 }
 
@@ -232,7 +288,7 @@ func (c *Client) load() error {
 func (c *Client) save() error {
 	b, err := json.MarshalIndent(c.st, "", "  ")
 	if err == nil {
-		b, err = app.AppendRecordKeys(b, c.st.extra)
+		b, err = record.AppendKeys(b, c.st.extra)
 	}
 	if err != nil {
 		return err
@@ -240,7 +296,16 @@ func (c *Client) save() error {
 	if err := os.MkdirAll(c.Dir, 0o700); err != nil {
 		return err
 	}
-	return app.WriteFileAtomic(c.statePath(), b, 0o600)
+	return fileio.WriteFile(c.statePath(), b, 0o600)
+}
+
+// serverOf is the server of a new state: an sshr-sync address, or the
+// name of the store of another Backend as it is
+func (c *Client) serverOf(server string) (string, error) {
+	if c.Backend != nil {
+		return server, nil
+	}
+	return checkServer(server)
 }
 
 // checkServer refuses plain HTTP except to this machine
@@ -304,7 +369,7 @@ func (c *Client) self() syncproto.Device { return c.keys.device(c.st.Name) }
 
 func (c *Client) vaultKey(epoch int) ([]byte, error) {
 	name := c.prefix() + "key-" + strconv.Itoa(epoch)
-	key, ok, err := app.SecretGet(name)
+	key, ok, err := vault.SecretGet(name)
 	if err != nil {
 		return nil, err
 	}
@@ -312,14 +377,14 @@ func (c *Client) vaultKey(epoch int) ([]byte, error) {
 		return key, nil
 	}
 	if c.st.Rotation != nil && c.st.Rotation.Epoch == epoch {
-		if key, ok, err := app.SecretGet(c.prefix() + "key-pending"); err != nil || ok {
+		if key, ok, err := vault.SecretGet(c.prefix() + "key-pending"); err != nil || ok {
 			return key, err
 		}
 	}
 	if key, err = c.envelopeKey(epoch); err != nil {
 		return nil, err
 	}
-	return key, app.SecretSet(name, key)
+	return key, vault.SecretSet(name, key)
 }
 
 func (c *Client) markKey(epoch int) {
@@ -336,15 +401,12 @@ func (c *Client) checkKey(epoch int, key []byte) ([]byte, error) {
 	if c.keyOK[epoch] || c.st.Counter == 0 {
 		return key, nil
 	}
-	code, b, _, err := c.call("GET", "/manifest", nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	if code == http.StatusNotFound {
+	_, b, err := c.backend().Head()
+	if errors.Is(err, ErrNotFound) {
 		return key, nil
 	}
-	if code != http.StatusOK {
-		return nil, serverError(code, b)
+	if err != nil {
+		return nil, err
 	}
 	var sm syncproto.Signed
 	var m syncproto.Manifest
@@ -367,7 +429,7 @@ func (c *Client) checkKey(epoch int, key []byte) ([]byte, error) {
 		if err := verifyMAC(&sm, fresh); err != nil {
 			return nil, fmt.Errorf("the vault key on this device does not open the account, pair it again: %v", err)
 		}
-		if err := app.SecretSet(c.prefix()+"key-"+strconv.Itoa(epoch), fresh); err != nil {
+		if err := vault.SecretSet(c.prefix()+"key-"+strconv.Itoa(epoch), fresh); err != nil {
 			return nil, err
 		}
 		key = fresh
@@ -379,15 +441,12 @@ func (c *Client) checkKey(epoch int, key []byte) ([]byte, error) {
 // envelopeKey reads the vault key of epoch from this device's envelope on
 // the server, without touching the keychain
 func (c *Client) envelopeKey(epoch int) ([]byte, error) {
-	code, b, _, err := c.call("GET", "/envelopes/"+c.st.DeviceID, nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	if code == http.StatusNotFound {
+	b, err := c.backend().GetEnvelope(c.st.DeviceID, epoch)
+	if errors.Is(err, ErrNotFound) {
 		return nil, ErrKeyPending
 	}
-	if code != http.StatusOK {
-		return nil, serverError(code, b)
+	if err != nil {
+		return nil, err
 	}
 	var env syncproto.Envelope
 	if err := json.Unmarshal(b, &env); err != nil {
@@ -408,7 +467,7 @@ func (c *Client) newSeed() error {
 	if _, err := rand.Read(seed); err != nil {
 		return err
 	}
-	if err := app.SecretSet(c.prefix()+"device", seed); err != nil {
+	if err := vault.SecretSet(c.prefix()+"device", seed); err != nil {
 		return err
 	}
 	var err error
@@ -434,10 +493,10 @@ func (c *Client) Init(server, name string) error {
 }
 
 func (c *Client) initAccount(server, name string) error {
-	if _, err := os.Stat(c.statePath()); err == nil {
-		return errors.New("sync is already set up here, see sshr sync status")
+	if err := c.CheckFree(); err != nil {
+		return err
 	}
-	srv, err := checkServer(server)
+	srv, err := c.serverOf(server)
 	if err != nil {
 		return err
 	}
@@ -448,14 +507,12 @@ func (c *Client) initAccount(server, name string) error {
 		return err
 	}
 	c.st = &state{Server: srv, Name: name, Entries: map[string]entryState{}}
+	c.keepBackend()
 	self := c.self()
 	body, _ := json.Marshal(syncproto.NewAccountRequest{Device: self})
-	code, b, _, err := c.call("POST", "!/v1/accounts", body, nil)
+	b, err := c.backend().CreateAccount(body)
 	if err != nil {
 		return err
-	}
-	if code != http.StatusCreated {
-		return serverError(code, b)
 	}
 	var tr syncproto.TokenResponse
 	if err := json.Unmarshal(b, &tr); err != nil {
@@ -465,13 +522,13 @@ func (c *Client) initAccount(server, name string) error {
 	c.st.Trusted = []syncproto.Device{self}
 	key := make([]byte, 32)
 	rand.Read(key)
-	if err := app.SecretSet(c.prefix()+"key-1", key); err != nil {
+	if err := vault.SecretSet(c.prefix()+"key-1", key); err != nil {
 		return err
 	}
 	if err := c.putEnvelope(self, 1, key); err != nil {
 		return err
 	}
-	if err := c.save(); err != nil {
+	if err := c.saveNew(); err != nil {
 		return err
 	}
 	return c.push(nil)
@@ -483,14 +540,10 @@ func (c *Client) putEnvelope(d syncproto.Device, epoch int, key []byte) error {
 		return err
 	}
 	b, _ := json.Marshal(env)
-	code, rb, _, err := c.call("PUT", "/envelopes/"+d.ID, b, nil)
-	if err != nil {
+	// a newer key already delivered to that device by a later rotation
+	// stays, writing this one over it would lock the device out
+	if err := c.backend().PutEnvelope(d.ID, b); err != nil && !errors.Is(err, ErrStaleEpoch) {
 		return err
-	}
-	// 409 is a newer key already delivered to that device by a later
-	// rotation, writing this one over it would lock the device out
-	if code != http.StatusNoContent && code != http.StatusConflict {
-		return serverError(code, rb)
 	}
 	return nil
 }
@@ -516,10 +569,10 @@ func (c *Client) Join(server, code, name string) (out string, err error) {
 }
 
 func (c *Client) join(server, code, name string) (string, error) {
-	if _, err := os.Stat(c.statePath()); err == nil {
-		return "", errors.New("sync is already set up here, see sshr sync status")
+	if err := c.CheckFree(); err != nil {
+		return "", err
 	}
-	srv, err := checkServer(server)
+	srv, err := c.serverOf(server)
 	if err != nil {
 		return "", err
 	}
@@ -534,21 +587,24 @@ func (c *Client) join(server, code, name string) (string, error) {
 		return "", err
 	}
 	c.st = &state{Server: srv, Account: account, Name: name, Approver: approver, Entries: map[string]entryState{}}
+	c.keepBackend()
 	self := c.self()
 	body, _ := json.Marshal(syncproto.NewAccountRequest{Device: self})
-	rc, b, _, err := c.call("POST", "/join", body, nil)
+	b, err := c.backend().Join(body)
 	if err != nil {
 		return "", err
-	}
-	if rc != http.StatusCreated {
-		return "", serverError(rc, b)
 	}
 	var tr syncproto.TokenResponse
 	if err := json.Unmarshal(b, &tr); err != nil {
 		return "", err
 	}
+	// the account that took the device is the one of the invite, a store
+	// or server that holds another is not joined
+	if tr.Account != account {
+		return "", fmt.Errorf("the sync store holds account %s, the invite is for %s, check the server or store", short(tr.Account, 8), short(account, 8))
+	}
 	c.st.Token, c.st.DeviceID = tr.Token, self.ID
-	return Fingerprint(self.SignPub), c.save()
+	return Fingerprint(self.SignPub), c.saveNew()
 }
 
 // Pending lists devices that joined and wait for approval
@@ -556,12 +612,9 @@ func (c *Client) Pending() ([]syncproto.DeviceRecord, error) {
 	if err := c.load(); err != nil {
 		return nil, err
 	}
-	code, b, _, err := c.call("GET", "/devices", nil, nil)
+	b, err := c.backend().Devices()
 	if err != nil {
 		return nil, err
-	}
-	if code != http.StatusOK {
-		return nil, serverError(code, b)
 	}
 	var all []syncproto.DeviceRecord
 	if err := json.Unmarshal(b, &all); err != nil {
@@ -627,12 +680,8 @@ func (c *Client) approve(prefix string) (*syncproto.DeviceRecord, error) {
 	if err := c.putEnvelope(d.Device, c.st.Epoch, key); err != nil {
 		return nil, err
 	}
-	code, b, _, err := c.call("POST", "/devices/"+d.ID+"/activate", nil, nil)
-	if err != nil {
+	if err := c.backend().Activate(d.ID); err != nil {
 		return nil, err
-	}
-	if code != http.StatusNoContent {
-		return nil, serverError(code, b)
 	}
 	return &d, nil
 }
@@ -642,8 +691,8 @@ func (c *Client) approve(prefix string) (*syncproto.DeviceRecord, error) {
 // with the vault key of the receiving machine, a private key stored in sshr
 // does not travel
 type payload struct {
-	Host     app.Host `json:"host"`
-	Password string   `json:"password,omitempty"`
+	Host     hosts.Host `json:"host"`
+	Password string     `json:"password,omitempty"`
 }
 
 // payloadJSON is the payload on the wire, the host is written and read by
@@ -653,7 +702,7 @@ type payloadJSON struct {
 	Password string          `json:"password,omitempty"`
 }
 
-func payloadOf(h app.Host) ([]byte, error) {
+func payloadOf(h hosts.Host) ([]byte, error) {
 	p := payload{Host: h}
 	p.Host.PasswordSealed, p.Host.PlainPassword, p.Host.KeySealed = "", "", ""
 	// when this machine last connected stays here, it would make every
@@ -662,17 +711,17 @@ func payloadOf(h app.Host) ([]byte, error) {
 	// the save counter is per machine, Import sets its own
 	p.Host.Rev = 0
 	// references to secrets of this machine stay here, the other devices
-	// do not take them anyway (app.FromOtherDevice)
+	// do not take them anyway (hosts.FromOtherDevice)
 	p.Host.PasswordRef, p.Host.KeyRef = "", ""
 	// the host part first, a host this build does not send (a newer
 	// format) is refused before its password is opened
-	host, err := app.HostPayloadJSON(p.Host)
+	host, err := hosts.HostPayloadJSON(p.Host)
 	if err != nil {
 		return nil, err
 	}
 	// only a password saved in sshr is read, one in 1Password stays there
-	if h.PasswordMode == app.PasswordSaved {
-		if err := app.Unlock(&h); err != nil {
+	if h.PasswordMode == hosts.PasswordSaved {
+		if err := hosts.UnlockSaved(&h); err != nil {
 			return nil, err
 		}
 		p.Password = h.Password
@@ -700,16 +749,16 @@ func newer(a, b syncproto.Entry) bool {
 func (c *Client) fetchHistory() ([]syncproto.Signed, error) {
 	var out []syncproto.Signed
 	after := c.st.Counter
+	// cut is the first change the sync no longer has when the history it
+	// sends starts past what this device saw
+	var cut uint64
 	for {
-		code, b, _, err := c.call("GET", "/manifests?after="+strconv.FormatUint(after, 10), nil, nil)
-		if err != nil {
-			return nil, err
-		}
-		if code == http.StatusForbidden {
+		b, err := c.backend().ManifestsAfter(after)
+		if errors.Is(err, ErrPending) {
 			return nil, errors.New("this device still waits for approval, run sshr sync approve on a device that is already in")
 		}
-		if code != http.StatusOK {
-			return nil, serverError(code, b)
+		if err != nil {
+			return nil, err
 		}
 		var page []syncproto.Signed
 		if err := json.Unmarshal(b, &page); err != nil {
@@ -718,23 +767,50 @@ func (c *Client) fetchHistory() ([]syncproto.Signed, error) {
 		if len(page) == 0 {
 			break
 		}
-		out = append(out, page...)
-		var m syncproto.Manifest
-		if err := json.Unmarshal(page[len(page)-1].Body, &m); err != nil {
-			return nil, err
+		// every change follows the one before, a page that does not move
+		// on would be asked for again and again, a device that joins may
+		// start where the kept history starts
+		for _, sm := range page {
+			var m syncproto.Manifest
+			if err := json.Unmarshal(sm.Body, &m); err != nil {
+				return nil, err
+			}
+			joining := len(out) == 0 && after == 0 && c.st.Counter == 0 && c.st.Approver != ""
+			switch {
+			case m.Counter <= after:
+				return nil, fmt.Errorf("the server sent change %d again after %d, the history does not add up", m.Counter, after)
+			case m.Counter != after+1 && !joining && len(out) == 0 && after == c.st.Counter:
+				// trimmed history or a gap, told apart once the length of
+				// what follows is known
+				cut = after + 1
+			case m.Counter != after+1 && !joining:
+				return nil, fmt.Errorf("the server skipped changes %d to %d, the history does not add up", after+1, m.Counter-1)
+			}
+			after = m.Counter
+			out = append(out, sm)
 		}
-		after = m.Counter
+		// past a gap keepHistory changes are enough to judge, a store
+		// could serve an endless list
+		if cut > 0 && len(out) >= keepHistory {
+			break
+		}
+	}
+	if cut > 0 {
+		var m syncproto.Manifest
+		json.Unmarshal(out[0].Body, &m)
+		// a trim keeps keepHistory changes, a shorter history with a hole
+		// is a server that hides changes, so is a long one whose last
+		// change no trusted device signed, padding costs nothing
+		last := out[len(out)-1]
+		if len(out) >= keepHistory && verifySignature(&last, c.st.Trusted) == nil {
+			return nil, fmt.Errorf("the sync keeps only the last %d changes and no longer has changes %d to %d, this device fell behind, run sshr sync leave and join again", keepHistory, cut, m.Counter-1)
+		}
+		return nil, fmt.Errorf("the server skipped changes %d to %d, the history does not add up", cut, m.Counter-1)
 	}
 	if len(out) == 0 && c.st.Counter > 0 {
-		code, b, hdr, err := c.call("GET", "/manifest", nil, nil)
-		if err != nil {
+		cur, _, err := c.backend().Head()
+		if err != nil && !errors.Is(err, ErrNotFound) {
 			return nil, err
-		}
-		cur := uint64(0)
-		if code == http.StatusOK {
-			cur, _ = strconv.ParseUint(hdr.Get("ETag"), 10, 64)
-		} else if code != http.StatusNotFound {
-			return nil, serverError(code, b)
 		}
 		if cur < c.st.Counter && !c.AcceptReset {
 			return nil, fmt.Errorf("the server shows change %d, this device has seen %d, the server rolled the account back or lost data, run with --accept-reset only if the server was restored from a backup", cur, c.st.Counter)
@@ -795,7 +871,7 @@ func (c *Client) verify(sm *syncproto.Signed, withMAC bool) (*syncproto.Manifest
 		// saved, its key still waits as key-pending and verifies the
 		// manifest, the delivery is taken up again
 		if c.st.Rotation == nil {
-			if pending, ok, _ := app.SecretGet(c.prefix() + "key-pending"); ok && verifyMAC(sm, pending) == nil {
+			if pending, ok, _ := vault.SecretGet(c.prefix() + "key-pending"); ok && verifyMAC(sm, pending) == nil {
 				c.st.Rotation = &rotation{Epoch: m.Epoch, Devices: m.Devices}
 			}
 		}
@@ -811,7 +887,7 @@ func (c *Client) verify(sm *syncproto.Signed, withMAC bool) (*syncproto.Manifest
 			if ferr != nil || verifyMAC(sm, fresh) != nil {
 				return nil, err
 			}
-			if err := app.SecretSet(c.prefix()+"key-"+strconv.Itoa(m.Epoch), fresh); err != nil {
+			if err := vault.SecretSet(c.prefix()+"key-"+strconv.Itoa(m.Epoch), fresh); err != nil {
 				return nil, err
 			}
 		}
@@ -938,7 +1014,7 @@ func (c *Client) apply(m *syncproto.Manifest) error {
 			continue
 		}
 		delete(c.st.Skipped, id)
-		var dup *app.Host
+		var dup *hosts.Host
 		conflict := false
 		known, seen := c.st.Entries[id]
 		knownEntry := syncproto.Entry{Lamport: known.Lamport, Device: known.Device}
@@ -972,7 +1048,7 @@ func (c *Client) apply(m *syncproto.Manifest) error {
 		// from reading the host here to writing the remote version no other
 		// sshr process saves hosts, an edit saved before is seen as a local
 		// change, one saved after waits and comes after the remote version
-		err = c.Store.Locked(func(store *app.Store) error {
+		err = c.Store.Locked(func(store *hosts.Store) error {
 			if applyLocked != nil {
 				applyLocked(id)
 			}
@@ -983,7 +1059,7 @@ func (c *Client) apply(m *syncproto.Manifest) error {
 				if now, err := payloadOf(*h); err == nil {
 					local[id] = now
 				}
-			} else if errors.Is(err, app.ErrNotFound) {
+			} else if errors.Is(err, hosts.ErrNotFound) {
 				delete(local, id)
 			}
 			if _, ok := local[id]; !ok && seen && !known.Deleted && !e.Deleted {
@@ -1001,7 +1077,7 @@ func (c *Client) apply(m *syncproto.Manifest) error {
 						p.Host.ID = ""
 						p.Host.Name = conflictName(p.Host.Name, e.Device)
 						var notes []string
-						p.Host, notes = app.FromOtherDevice(p.Host, nil)
+						p.Host, notes = hosts.FromOtherDevice(p.Host, nil)
 						cp, err := store.Add(p.Host)
 						if err != nil {
 							c.st.Skipped[id] = e
@@ -1040,7 +1116,7 @@ func (c *Client) apply(m *syncproto.Manifest) error {
 			}
 			if e.Deleted {
 				if _, ok := local[id]; ok {
-					if err := store.Delete(id); err != nil && !errors.Is(err, app.ErrNotFound) {
+					if err := store.Delete(id); err != nil && !errors.Is(err, hosts.ErrNotFound) {
 						return err
 					}
 					c.logf("removed %s", short(id, 8))
@@ -1049,11 +1125,11 @@ func (c *Client) apply(m *syncproto.Manifest) error {
 				return nil
 			}
 			p.Host.Password = p.Password
-			var cur *app.Host
+			var cur *hosts.Host
 			if h, err := store.Find(id); err == nil && h.ID == id {
 				cur = h
 			}
-			_, notes := app.FromOtherDevice(p.Host, cur)
+			_, notes := hosts.FromOtherDevice(p.Host, cur)
 			h, err := store.Import(p.Host)
 			if err != nil {
 				// one host this version cannot take must not stop the others,
@@ -1090,12 +1166,9 @@ func (c *Client) apply(m *syncproto.Manifest) error {
 
 // fetchBlob downloads the blob hash of entry id and opens it
 func (c *Client) fetchBlob(id, hash string, key []byte, epoch int) ([]byte, error) {
-	code, blob, _, err := c.call("GET", "/blobs/"+hash, nil, nil)
+	blob, err := c.backend().GetBlob(hash)
 	if err != nil {
 		return nil, err
-	}
-	if code != http.StatusOK {
-		return nil, serverError(code, blob)
 	}
 	if blobHash(blob) != hash {
 		return nil, fmt.Errorf("blob of %s does not match its hash", short(id, 8))
@@ -1110,12 +1183,8 @@ func (c *Client) putBlob(key []byte, id string, epoch int, plain []byte) (string
 		return "", err
 	}
 	h := blobHash(blob)
-	code, b, _, err := c.call("PUT", "/blobs/"+h, blob, nil)
-	if err != nil {
+	if err := c.backend().PutBlob(h, blob); err != nil {
 		return "", err
-	}
-	if code != http.StatusNoContent {
-		return "", serverError(code, b)
 	}
 	return h, nil
 }
@@ -1134,7 +1203,7 @@ func (c *Client) fetchPayload(id string, e syncproto.Entry, key []byte, epoch in
 	if err := json.Unmarshal(plain, &wire); err != nil {
 		return nil, fmt.Errorf("%w: entry %s: %v", errBadPayload, short(id, 8), err)
 	}
-	host, err := app.HostFromPayloadJSON(wire.Host)
+	host, err := hosts.HostFromPayloadJSON(wire.Host)
 	if err != nil {
 		return nil, fmt.Errorf("%w: entry %s: %v", errBadPayload, short(id, 8), err)
 	}
@@ -1162,7 +1231,7 @@ func conflictName(name, device string) string {
 // localHosts returns the payload of every host here and the IDs of host
 // files that do not load, those are neither deleted nor overwritten
 func (c *Client) localHosts() (map[string][]byte, map[string]string, error) {
-	hosts, unreadable, err := c.Store.ListAll()
+	list, unreadable, err := c.Store.ListAll()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1174,9 +1243,9 @@ func (c *Client) localHosts() (map[string][]byte, map[string]string, error) {
 		broken[id] = "its host file " + id + ".json here does not load, fix it, removing it deletes the host on every device"
 	}
 	out := map[string][]byte{}
-	for _, h := range hosts {
+	for _, h := range list {
 		p, err := payloadOf(h)
-		if errors.Is(err, app.ErrNewerFormat) {
+		if errors.Is(err, record.ErrNewerFormat) {
 			broken[h.ID] = err.Error()
 			continue
 		}
@@ -1354,15 +1423,12 @@ func (c *Client) pushOnce(plan pushPlan) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	code, rb, _, err := c.call("PUT", "/manifest", b, map[string]string{"If-Match": strconv.FormatUint(c.st.Counter, 10)})
-	if err != nil {
-		return false, err
-	}
-	if code == http.StatusPreconditionFailed {
+	err = c.backend().PutManifest(c.st.Counter, b)
+	if errors.Is(err, ErrCASLost) {
 		return false, nil
 	}
-	if code != http.StatusNoContent {
-		return false, serverError(code, rb)
+	if err != nil {
+		return false, err
 	}
 	c.st.Counter, c.st.Head, c.st.Trusted, c.st.Entries = m.Counter, syncproto.BodyHash(sm.Body), devices, next
 	c.st.Epoch, c.st.Skipped = epoch, skipped
@@ -1405,12 +1471,8 @@ func (c *Client) removeDevice(prefix string) (*syncproto.Device, error) {
 	// the token goes first, a removed device that can still push could
 	// block the others with manifests no one trusts, a rerun after a lost
 	// race finds the device still listed and gets 404 here
-	code, b, _, err := c.call("DELETE", "/devices/"+removed.ID, nil, nil)
-	if err != nil {
+	if err := c.backend().RemoveDevice(removed.ID); err != nil && !errors.Is(err, ErrNotFound) {
 		return nil, err
-	}
-	if code != http.StatusNoContent && code != http.StatusNotFound {
-		return nil, serverError(code, b)
 	}
 	gone := false
 	plan := func() (pushPlan, error) {
@@ -1427,7 +1489,7 @@ func (c *Client) removeDevice(prefix string) (*syncproto.Device, error) {
 		if _, err := rand.Read(key); err != nil {
 			return pushPlan{}, err
 		}
-		if err := app.SecretSet(c.prefix()+"key-pending", key); err != nil {
+		if err := vault.SecretSet(c.prefix()+"key-pending", key); err != nil {
 			return pushPlan{}, err
 		}
 		epoch := c.st.Epoch + 1
@@ -1435,7 +1497,7 @@ func (c *Client) removeDevice(prefix string) (*syncproto.Device, error) {
 	}
 	if err := c.push(plan); err != nil {
 		if c.st.Rotation == nil {
-			app.SecretDelete(c.prefix() + "key-pending")
+			vault.SecretDelete(c.prefix() + "key-pending")
 		}
 		return nil, fmt.Errorf("the token of the device is revoked, it is still listed, run sshr sync remove-device again: %v", err)
 	}
@@ -1488,19 +1550,19 @@ func (c *Client) finishRotation() error {
 	if r == nil {
 		return nil
 	}
-	key, ok, err := app.SecretGet(c.prefix() + "key-pending")
+	key, ok, err := vault.SecretGet(c.prefix() + "key-pending")
 	if err != nil {
 		return err
 	}
 	if !ok {
-		if key, ok, err = app.SecretGet(c.prefix() + "key-" + strconv.Itoa(r.Epoch)); err != nil {
+		if key, ok, err = vault.SecretGet(c.prefix() + "key-" + strconv.Itoa(r.Epoch)); err != nil {
 			return err
 		}
 		if !ok {
 			return fmt.Errorf("the key of epoch %d is lost on this device, remove and pair the other devices again", r.Epoch)
 		}
 	}
-	if err := app.SecretSet(c.prefix()+"key-"+strconv.Itoa(r.Epoch), key); err != nil {
+	if err := vault.SecretSet(c.prefix()+"key-"+strconv.Itoa(r.Epoch), key); err != nil {
 		return err
 	}
 	for _, d := range r.Devices {
@@ -1508,7 +1570,7 @@ func (c *Client) finishRotation() error {
 			return err
 		}
 	}
-	app.SecretDelete(c.prefix() + "key-pending")
+	vault.SecretDelete(c.prefix() + "key-pending")
 	c.st.Rotation = nil
 	return c.save()
 }
@@ -1524,6 +1586,8 @@ type Status struct {
 	Devices  []syncproto.Device
 	Waiting  bool
 	LastSync time.Time
+	// Backend is the store of an account that is not sshr-sync
+	Backend *BackendRef
 }
 
 func (c *Client) Status() (*Status, error) {
@@ -1533,7 +1597,7 @@ func (c *Client) Status() (*Status, error) {
 	st := &Status{
 		Server: c.st.Server, Account: c.st.Account, Device: c.st.DeviceID, Name: c.st.Name,
 		Fingerprint: Fingerprint(c.self().SignPub), Counter: c.st.Counter,
-		Waiting: c.st.Approver != "", LastSync: c.st.LastSync,
+		Waiting: c.st.Approver != "", LastSync: c.st.LastSync, Backend: c.st.Backend,
 	}
 	for _, d := range c.st.Trusted {
 		d.Name = CleanName(d.Name)
@@ -1550,7 +1614,7 @@ func (c *Client) Leave(force bool) error {
 }
 
 func (c *Client) leave(force bool) error {
-	b, err := app.ReadFileShared(c.statePath())
+	b, err := fileio.ReadFileShared(c.statePath())
 	if err == nil {
 		var st state
 		if json.Unmarshal(b, &st) == nil {
@@ -1558,6 +1622,12 @@ func (c *Client) leave(force bool) error {
 			// lives only here, leaving would strand the other devices
 			if st.Rotation != nil && !force {
 				if err := c.load(); err != nil {
+					// only a store that will not open again asks for
+					// --force, a keychain that fails for now does not
+					var se storeOpenError
+					if errors.As(err, &se) {
+						return fmt.Errorf("the other devices still wait for the vault key this device changed and the sync store does not open to deliver it, leave with --force and pair them again: %v", err)
+					}
 					return err
 				}
 				if err := c.finishRotation(); err != nil {
@@ -1565,12 +1635,13 @@ func (c *Client) leave(force bool) error {
 				}
 			}
 			for e := 1; e <= st.Epoch; e++ {
-				app.SecretDelete(c.prefix() + "key-" + strconv.Itoa(e))
+				vault.SecretDelete(c.prefix() + "key-" + strconv.Itoa(e))
 			}
 		}
 	}
-	app.SecretDelete(c.prefix() + "key-pending")
-	app.SecretDelete(c.prefix() + "device")
+	vault.SecretDelete(c.prefix() + "key-pending")
+	vault.SecretDelete(c.prefix() + "device")
+	vault.SecretDelete(c.storeSecretName())
 	if err := os.Remove(c.statePath()); err != nil && !os.IsNotExist(err) {
 		return err
 	}

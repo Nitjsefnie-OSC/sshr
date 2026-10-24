@@ -181,6 +181,10 @@ func TestPrepareFromGitRecordsTheCommitAndDropsTheHistory(t *testing.T) {
 		"protocol.allow=never", "protocol.https.allow=always", "protocol.ssh.allow=always",
 		"core.hooksPath=" + os.DevNull, "filter.lfs.required=false",
 		"GIT_ALLOW_PROTOCOL=https:ssh", "GIT_TERMINAL_PROMPT=0", "GIT_SSH_COMMAND=ssh -o BatchMode=yes",
+		// the user's git config is not read (#264)
+		"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_SYSTEM=" + os.DevNull, "core.attributesFile=" + os.DevNull,
+		// and an empty HOME for git older than 2.32 (#265)
+		"XDG_CONFIG_HOME=" + os.TempDir(),
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("git was run without %q:\n%s", want, got)
@@ -395,5 +399,73 @@ func TestDamagedPinsTouchNoFolder(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(r.Root, "hello")); err != nil {
 			t.Fatalf("%s: the folder went: %v", bad, err)
 		}
+	}
+}
+
+// an install from the catalog takes the commit of the entry, the newest one
+// is kept when it is that commit, any other is fetched by its hash and must
+// end up checked out (#170)
+func TestPrepareAtPinsTheCommit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the git stub is a shell script")
+	}
+	const head = "0123456789abcdef0123456789abcdef01234567"
+	log := gitStub(t, source(t, "pinned", "#!/bin/sh\necho hi\n"), "")
+	st, err := PrepareAt("https://example.com/a/pinned.git", head)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Discard()
+	if st.Lock.Commit != head {
+		t.Errorf("commit %s", st.Lock.Commit)
+	}
+	b, _ := os.ReadFile(log)
+	if strings.Contains(string(b), " fetch ") {
+		t.Errorf("fetched although the newest commit is the pinned one:\n%s", b)
+	}
+
+	os.Remove(log)
+	other := strings.Repeat("f", 40)
+	_, err = PrepareAt("https://example.com/a/pinned.git", other)
+	if err == nil || !strings.Contains(err.Error(), "does not hold commit") {
+		t.Errorf("a repository without the commit: %v", err)
+	}
+	b, _ = os.ReadFile(log)
+	for _, want := range []string{"fetch --depth 1 --no-tags --filter=blob:limit=5m origin " + other, "checkout --quiet --detach FETCH_HEAD", "core.hooksPath=" + os.DevNull} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("git was run without %q:\n%s", want, b)
+		}
+	}
+	for _, bad := range [][2]string{{"http://example.com/a.git", head}, {"https://example.com/a.git", "abc"}, {"https://example.com/a.git", "--upload-pack=x"}} {
+		if _, err := PrepareAt(bad[0], bad[1]); err == nil {
+			t.Errorf("PrepareAt(%q, %q) went on", bad[0], bad[1])
+		}
+	}
+}
+
+// a folder install records the full path of the folder (#260)
+func TestPrepareRecordsTheFullFolderPath(t *testing.T) {
+	src := source(t, "hello", "#!/bin/sh\necho hi\n")
+	t.Chdir(filepath.Dir(src))
+	st, err := Prepare(filepath.Base(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Discard()
+	if !filepath.IsAbs(st.Lock.Source) || st.Lock.Source != src {
+		t.Errorf("source %q, want %q", st.Lock.Source, src)
+	}
+}
+
+// the output of a failed git run loses its escape sequences and keeps its
+// lines (#267)
+func TestGitErrorsAreCleaned(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the git stub is a shell script")
+	}
+	gitStub(t, source(t, "noisy", "#!/bin/sh\n"), "  printf 'remote: \\033[2Jgone\\nfatal: bad\\n' >&2; exit 1\n")
+	_, err := Prepare("https://example.com/a/noisy.git")
+	if err == nil || strings.ContainsRune(err.Error(), 0x1b) || !strings.Contains(err.Error(), "remote: [2Jgone\nfatal: bad") {
+		t.Errorf("error %q", err)
 	}
 }

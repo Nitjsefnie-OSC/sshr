@@ -186,7 +186,14 @@ Options:
 
 Options:
   --allow-commands   allow run_command, off by default (mcp_commands setting)
-  --no-commands      refuse it even when the setting is on`},
+  --no-commands      refuse it even when the setting is on
+  --confirm-commands   ask before every command through the client, a client
+                       that cannot ask gets them refused (confirm_commands)
+  --no-confirm         run without asking even when the setting is on
+  --listed-hosts-only  run_command only on hosts of sshr commands allow
+  --all-hosts          on every host even when commands_listed_only is set
+  --audit            keep ~/.sshr/audit.jsonl, off by default (audit_log setting)
+  --no-audit         keep no audit log even when the setting is on`},
 	{name: "serve", usage: "sshr serve [options]", short: "local REST API",
 		details: `Never returns secrets, commands are off by default
 
@@ -194,7 +201,11 @@ Options:
   --listen unix:<path>       a unix socket, the default
   --listen 127.0.0.1:<port>  a loopback port, needs the token from ~/.sshr/api-token
   --allow-commands           allow POST /run, off by default (api_commands setting)
-  --no-commands              refuse it even when the setting is on`},
+  --no-commands              refuse it even when the setting is on
+  --listed-hosts-only        POST /run only on hosts of sshr commands allow
+  --all-hosts                on every host even when commands_listed_only is set
+  --audit                    keep ~/.sshr/audit.jsonl, off by default (audit_log setting)
+  --no-audit                 keep no audit log even when the setting is on`},
 	{name: "sync", usage: "sshr sync [init|invite|join|pending|approve|pull|push|status|remove-device|leave]", short: "sync hosts between devices",
 		details: `End to end encrypted through an sshr-sync server, sshr sync help shows
 the steps`},
@@ -218,6 +229,28 @@ macOS, run it again after an update
 
 Options:
   --remove   take it out of the menu`},
+	{name: "commands", usage: "sshr commands list|only|all|allow <host>|deny <host>", short: "hosts assistants and scripts may run commands on",
+		details: `Commands through sshr mcp and sshr serve are off until --allow-commands or
+the setting turns them on, then every host takes them. only limits them to
+the hosts allowed here, all goes back to every host (commands_listed_only
+setting, --listed-hosts-only and --all-hosts for one run). allow lists a
+host for where it points now, a host that points elsewhere later, for
+example changed on another device, is refused until it is allowed again.
+The list is in settings.json and never syncs`},
+	{name: "vault", usage: "sshr vault status|passphrase|keychain", short: "keep the vault key in the keychain or under a passphrase",
+		details: `The vault key seals saved passwords and keys stored in sshr. It lives in
+the system keychain, passphrase moves a copy into ~/.sshr/vault/vault-key.json
+wrapped with a passphrase (Argon2id) for a machine without a keychain, off by
+default: the passphrase is asked once per run, a forgotten one loses every
+saved secret, and the file can be attacked offline, keychain moves the key
+back and removes the file, the keys of the sync device move along, a key
+already in the keychain stays there, so on such a machine the passphrase
+does not stop a switch back to the keychain
+
+Examples:
+  sshr vault status
+  sshr vault passphrase
+  sshr vault keychain`},
 	{name: "ext", usage: `sshr ext install <git url or folder> [--yes]
 sshr ext import <name> [args...]
 sshr ext list

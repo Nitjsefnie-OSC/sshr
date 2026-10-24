@@ -12,14 +12,6 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 )
 
-// KeyAgent is the KeyMode of a host whose key stays in an ssh agent, the
-// system one, the 1Password SSH agent or any agent socket, sshr only tells
-// ssh which agent and which of its keys to use
-const KeyAgent = "agent"
-
-// AgentOnePassword names the 1Password SSH agent in Host.Agent
-const AgentOnePassword = "1password"
-
 // agentSocket is where the agent of a host listens, empty means the
 // SSH_AUTH_SOCK of the session
 func agentSocket(name string) string {
@@ -109,9 +101,8 @@ func pickAgentKey(keys []*agent.Key, want string) (*agent.Key, error) {
 
 // prepareAgentKey turns AgentKey into the public key ssh is told to use
 func prepareAgentKey(h *Host) error {
-	h.Agent = strings.TrimSpace(h.Agent)
-	if h.Agent != "" && h.Agent != "system" && h.Agent != AgentOnePassword && !filepath.IsAbs(ExpandHome(h.Agent)) && !strings.HasPrefix(h.Agent, `\\.\pipe\`) {
-		return fmt.Errorf("agent %q: use system, 1password or the full path of the agent socket", h.Agent)
+	if err := checkAgent(h); err != nil {
+		return err
 	}
 	if h.AgentKey == "" {
 		return nil

@@ -16,10 +16,15 @@ import (
 	"time"
 
 	"sshr.dev/internal/app"
+	"sshr.dev/internal/audit"
 )
 
 // protocol versions this server speaks, newest first
 var versions = []string{"2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"}
+
+// logOut is where the server says what it runs, stderr, which the MCP
+// client shows or logs
+var logOut io.Writer = os.Stderr
 
 // Options are the choices made when the server starts
 type Options struct {
@@ -27,6 +32,14 @@ type Options struct {
 	// can run commands on every saved server can also break them
 	AllowCommands bool
 	Version       string
+	// Audit records uploads and commands, nil keeps no record
+	Audit *audit.Log
+	// CommandsAllowed says whether run_command may run on a host, nil
+	// allows every host
+	CommandsAllowed func(*app.Host) error
+	// ConfirmCommands asks the user through the client before every
+	// command, a client that cannot ask gets every command refused
+	ConfirmCommands bool
 }
 
 type request struct {
@@ -34,6 +47,10 @@ type request struct {
 	ID      json.RawMessage `json:"id,omitempty"`
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
+	// Result and Error mark a response of the client to a request of the
+	// server, it is not a request and gets no answer
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  json.RawMessage `json:"error,omitempty"`
 }
 
 type rpcError struct {
@@ -50,7 +67,8 @@ type response struct {
 
 // Serve answers requests from r on w until r ends
 func Serve(r io.Reader, w io.Writer, store *app.Store, opts Options) error {
-	s := &server{store: store, opts: opts, w: w, slots: make(chan struct{}, maxRunning)}
+	s := &server{store: store, opts: opts, w: w, slots: make(chan struct{}, maxRunning),
+		pending: map[string]chan request{}, done: make(chan struct{})}
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64<<10), 8<<20)
 	var wg sync.WaitGroup
@@ -68,6 +86,17 @@ func Serve(r io.Reader, w io.Writer, store *app.Store, opts Options) error {
 			// a notification, initialized and cancelled need no answer
 			continue
 		}
+		if req.Method == "" && (len(req.Result) > 0 || len(req.Error) > 0) {
+			// a response is never answered, an answer to it would loop, it
+			// goes to the question that waits for it
+			s.deliver(req)
+			continue
+		}
+		if req.Method == "initialize" {
+			// the client info it carries is needed by the calls after it
+			s.handle(req)
+			continue
+		}
 		// a command can take minutes, other requests are answered meanwhile
 		wg.Add(1)
 		go func() {
@@ -75,6 +104,8 @@ func Serve(r io.Reader, w io.Writer, store *app.Store, opts Options) error {
 			s.handle(req)
 		}()
 	}
+	// questions still waiting are refused, the client is gone
+	close(s.done)
 	wg.Wait()
 	return sc.Err()
 }
@@ -89,10 +120,39 @@ type server struct {
 	mu    sync.Mutex
 	w     io.Writer
 	slots chan struct{}
+	// client is what the client said it is in initialize
+	client string
+	// elicit is whether the client can show a question to the user,
+	// pending are the questions waiting for an answer by id, done closes
+	// when the client is gone
+	elicit  bool
+	nextID  int
+	pending map[string]chan request
+	done    chan struct{}
 }
 
-func (s *server) send(resp response) {
-	b, err := json.Marshal(resp)
+// begin writes the start of an action to the audit log, an action whose
+// start cannot be written does not run
+func (s *server) begin(action string, h *app.Host, command string) (func(int, int64, error), error) {
+	s.mu.Lock()
+	client := s.client
+	s.mu.Unlock()
+	return s.opts.Audit.Begin(audit.Record{Surface: "mcp", Client: client, Action: action,
+		HostID: h.ID, HostName: h.Name, Target: fmt.Sprintf("%s:%d", h.Dest(), h.Port), Command: command})
+}
+
+func exitOf(err error) int {
+	if err != nil {
+		return -1
+	}
+	return 0
+}
+
+func (s *server) send(resp response) { s.write(resp) }
+
+// write sends one message, a response or a request of the server
+func (s *server) write(v any) {
+	b, err := json.Marshal(v)
 	if err != nil {
 		return
 	}
@@ -106,15 +166,27 @@ func (s *server) handle(req request) {
 	switch req.Method {
 	case "initialize":
 		var p struct {
-			ProtocolVersion string `json:"protocolVersion"`
+			ProtocolVersion string          `json:"protocolVersion"`
+			Capabilities    json.RawMessage `json:"capabilities"`
+			ClientInfo      struct {
+				Name    string `json:"name"`
+				Version string `json:"version"`
+			} `json:"clientInfo"`
 		}
 		json.Unmarshal(req.Params, &p)
+		// the client names itself, the parent process is what started sshr
+		s.mu.Lock()
+		s.client = fmt.Sprintf("%s %s, parent pid %d", p.ClientInfo.Name, p.ClientInfo.Version, os.Getppid())
+		s.mu.Unlock()
 		version := versions[0]
 		for _, v := range versions {
 			if v == p.ProtocolVersion {
 				version = v
 			}
 		}
+		s.mu.Lock()
+		s.elicit = canElicit(version, p.Capabilities)
+		s.mu.Unlock()
 		resp.Result = map[string]any{
 			"protocolVersion": version,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
@@ -169,7 +241,9 @@ func toolError(err error) string {
 	if errors.Is(err, app.ErrAsksPassword) {
 		return "this host asks for its password on every connect and there is no terminal to type it in, save its password in sshr or log in with a key"
 	}
-	return err.Error()
+	// ssh errors carry the stderr and the banner of the server
+	text, _ := dataText(err.Error())
+	return text
 }
 
 func (s *server) tools() []map[string]any {
@@ -238,9 +312,21 @@ func (s *server) call(name string, raw json.RawMessage) (toolResult, error) {
 		if err := json.Unmarshal(raw, &a); err != nil {
 			return toolResult{}, err
 		}
+		// the question comes before the slot, eight unanswered questions
+		// would hold every upload otherwise
+		// one lookup: the host checked and shown in the question is the
+		// host the command runs on, a sync during the question changes
+		// nothing
+		h, err := s.findHost(a.Host)
+		if err != nil {
+			return toolResult{}, err
+		}
+		if err := s.allowRun(h, a.Command); err != nil {
+			return toolResult{}, err
+		}
 		s.slots <- struct{}{}
 		defer func() { <-s.slots }()
-		return s.runCommand(a.Host, a.Command, a.TimeoutSeconds)
+		return s.runCommand(h, a.Command, a.TimeoutSeconds)
 	}
 	return toolResult{}, fmt.Errorf("%w %q", errUnknownTool, name)
 }
@@ -252,12 +338,12 @@ func (s *server) listHosts() (toolResult, error) {
 	}
 	out := make([]app.HostSummary, 0, len(hosts))
 	for i := range hosts {
-		out = append(out, hosts[i].Summary())
+		out = append(out, dataSummary(hosts[i].Summary()))
 	}
 	b, _ := json.MarshalIndent(out, "", "  ")
 	return toolResult{
-		Content:           []content{{Type: "text", Text: string(b)}},
-		StructuredContent: map[string]any{"hosts": out},
+		Content:           []content{{Type: "text", Text: hostsNote + "\n" + string(b)}},
+		StructuredContent: map[string]any{"hosts": out, "note": hostsNote},
 	}, nil
 }
 
@@ -293,17 +379,20 @@ func (s *server) uploadFile(host, path string) (toolResult, error) {
 	if !filepath.IsAbs(path) {
 		return toolResult{}, errors.New("path must be absolute")
 	}
-	if err := checkUploadPath(path); err != nil {
+	// the file read is the one checked, a link swapped after the check
+	// does not reach a hidden file
+	real, err := checkUploadPath(path)
+	if err != nil {
 		return toolResult{}, err
 	}
-	info, err := os.Stat(path)
+	info, err := os.Stat(real)
 	if err != nil {
 		return toolResult{}, err
 	}
 	if !info.Mode().IsRegular() || info.Size() > uploadMax {
 		return toolResult{}, fmt.Errorf("%s is not a regular file of at most %d MiB", path, uploadMax>>20)
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(real)
 	if err != nil {
 		return toolResult{}, err
 	}
@@ -311,44 +400,80 @@ func (s *server) uploadFile(host, path string) (toolResult, error) {
 	if ext == "" {
 		ext = "bin"
 	}
-	remote, err := s.store.UploadImage(h, data, ext, true)
+	end, err := s.begin("upload_file", h, "")
 	if err != nil {
 		return toolResult{}, err
 	}
+	remote, err := s.store.UploadImage(h, data, ext, true)
+	end(exitOf(err), int64(len(data)), err)
+	if err != nil {
+		return toolResult{}, err
+	}
+	name, _ := dataText(h.Name)
+	remote, _ = dataText(remote)
 	return toolResult{
 		Content:           []content{{Type: "text", Text: remote}},
-		StructuredContent: map[string]any{"host": h.Name, "path": remote},
+		StructuredContent: map[string]any{"host": name, "path": remote},
 	}, nil
 }
 
-func (s *server) runCommand(host, command string, timeout int) (toolResult, error) {
-	h, err := s.findHost(host)
-	if err != nil {
-		return toolResult{}, err
+// allowRun checks a command before it waits for a slot: the host is
+// allowed and, when asked for, the user said yes
+func (s *server) allowRun(h *app.Host, command string) error {
+	if s.opts.CommandsAllowed != nil {
+		if err := s.opts.CommandsAllowed(h); err != nil {
+			return err
+		}
 	}
+	if s.opts.ConfirmCommands && strings.TrimSpace(command) != "" {
+		return s.confirm(h, command)
+	}
+	return nil
+}
+
+func (s *server) runCommand(h *app.Host, command string, timeout int) (toolResult, error) {
 	if strings.TrimSpace(command) == "" {
 		return toolResult{}, errors.New("empty command")
 	}
+
 	if timeout <= 0 {
 		timeout = 60
 	}
 	if timeout > 600 {
 		timeout = 600
 	}
-	fmt.Fprintf(os.Stderr, "sshr mcp: run on %s: %s\n", h.Name, command)
-	res, err := s.store.RunRemote(h, command, nil, time.Duration(timeout)*time.Second)
+	// quoted, a carriage return or an escape sequence in the command cannot
+	// rewrite lines in the log of the client
+	fmt.Fprintf(logOut, "sshr mcp: run on %q: %q\n", h.Name, command)
+	end, err := s.begin("run_command", h, command)
 	if err != nil {
 		return toolResult{}, err
 	}
-	text := fmt.Sprintf("exit code %d\n--- stdout\n%s\n--- stderr\n%s", res.ExitCode, res.Stdout, res.Stderr)
+	res, err := s.store.RunRemote(h, command, nil, time.Duration(timeout)*time.Second)
+	if err != nil {
+		end(-1, 0, err)
+		return toolResult{}, err
+	}
+	end(res.ExitCode, int64(len(res.Stdout)+len(res.Stderr)), nil)
+	// the output is the remote host's, it reaches the model as data
+	stdout, n1 := dataText(string(res.Stdout))
+	stderr, n2 := dataText(string(res.Stderr))
+	nonce := newNonce()
+	text := fmt.Sprintf("exit code %d\n%s\n%s", res.ExitCode, fenced("stdout", stdout, nonce), fenced("stderr", stderr, nonce))
+	if n := n1 + n2; n > 0 {
+		text += fmt.Sprintf("\n(%d control characters and escape sequences removed)", n)
+	}
 	if res.Truncated {
 		text += "\n(output cut at 64 KiB)"
 	}
+	name, _ := dataText(h.Name)
 	return toolResult{
 		Content: []content{{Type: "text", Text: text}},
+		// clients hand structuredContent to the model too, it carries the
+		// same markers
 		StructuredContent: map[string]any{
-			"host": h.Name, "exit_code": res.ExitCode,
-			"stdout": string(res.Stdout), "stderr": string(res.Stderr), "truncated": res.Truncated,
+			"host": name, "exit_code": res.ExitCode,
+			"stdout": fenced("stdout", stdout, nonce), "stderr": fenced("stderr", stderr, nonce), "truncated": res.Truncated,
 		},
 		IsError: res.ExitCode != 0,
 	}, nil
@@ -357,26 +482,26 @@ func (s *server) runCommand(host, command string, timeout int) (toolResult, erro
 // checkUploadPath refuses files in hidden folders of the home folder and
 // hidden files there, ~/.ssh keys, ~/.sshr tokens and sync state, cloud
 // credentials, the path is resolved first so a link cannot point there
-func checkUploadPath(path string) error {
+func checkUploadPath(path string) (string, error) {
 	real, err := filepath.EvalSymlinks(path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return err
+		return "", err
 	}
 	if h, err := filepath.EvalSymlinks(home); err == nil {
 		home = h
 	}
 	rel, err := filepath.Rel(home, real)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return nil
+		return real, nil
 	}
 	for _, part := range strings.Split(rel, string(filepath.Separator)) {
 		if strings.HasPrefix(part, ".") {
-			return fmt.Errorf("%s is hidden in the home folder (keys, tokens, settings), upload_file does not send such files, copy it elsewhere first if it is meant to go", path)
+			return "", fmt.Errorf("%s is hidden in the home folder (keys, tokens, settings), upload_file does not send such files, copy it elsewhere first if it is meant to go", path)
 		}
 	}
-	return nil
+	return real, nil
 }

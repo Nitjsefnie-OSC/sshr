@@ -17,6 +17,7 @@ import (
 	"golang.org/x/term"
 
 	"sshr.dev/internal/app"
+	"sshr.dev/internal/syncclient"
 	"sshr.dev/internal/desktop"
 )
 
@@ -116,6 +117,10 @@ func runCLI(args []string) {
 		cmdCompletion(args[1:])
 	case completeCommand:
 		cmdComplete(store, args[1:])
+	case "vault":
+		cmdVault(args[1:])
+	case "commands":
+		cmdCommands(store, args[1:])
 	case "ext":
 		cmdExt(store, args[1:])
 	case "help", "--help", "-h":
@@ -1120,6 +1125,123 @@ func cmdDesktopEntry(args []string) {
 }
 
 // cmdTag shows a host's tags or changes them: +x or x adds, -x removes
+// cmdVault shows where the vault key lives and moves it between the system
+// keychain and a file under a passphrase
+func cmdVault(args []string) {
+	if len(args) != 1 {
+		fmt.Fprintln(os.Stderr, "Usage: sshr vault status|passphrase|keychain")
+		os.Exit(1)
+	}
+	// the keys of the sync device move with the vault key
+	var names []string
+	if args[0] == "passphrase" || args[0] == "keychain" {
+		dir, err := syncclient.DefaultDir()
+		if err != nil {
+			fatal(err)
+		}
+		if names, err = syncclient.SecretNames(dir); err != nil {
+			fatal(fmt.Errorf("%v, nothing is changed", err))
+		}
+	}
+	switch args[0] {
+	case "status":
+		fmt.Println(app.VaultMode())
+	case "passphrase":
+		first, err := app.AskTerminal("New vault passphrase: ")
+		if err != nil {
+			fatal(fmt.Errorf("the passphrase is asked on a terminal: %v", err))
+		}
+		again, err := app.AskTerminal("Again: ")
+		if err != nil {
+			fatal(err)
+		}
+		if first != again {
+			fatal(fmt.Errorf("the two passphrases differ, nothing is changed"))
+		}
+		if err := app.SetVaultPassphrase(first, names); err != nil {
+			fatal(err)
+		}
+		fmt.Println("The vault key and the sync keys are now in ~/.sshr/vault under the passphrase, a forgotten passphrase loses the saved passwords and keys")
+	case "keychain":
+		if err := app.UseKeychainVault(names); err != nil {
+			fatal(err)
+		}
+		fmt.Println("The vault key and the sync keys are in the system keychain again, the passphrase files are removed")
+	default:
+		fmt.Fprintln(os.Stderr, "Usage: sshr vault status|passphrase|keychain")
+		os.Exit(1)
+	}
+}
+
+const commandsUsage = "Usage: sshr commands list|only|all|allow <host>|deny <host>"
+
+// cmdCommands keeps the list of hosts assistants and scripts may run
+// commands on through sshr mcp and sshr serve
+func cmdCommands(store *app.Store, args []string) {
+	if len(args) == 0 || len(args) > 2 {
+		fmt.Fprintln(os.Stderr, commandsUsage)
+		os.Exit(1)
+	}
+	st, err := app.LoadSettings()
+	if err != nil {
+		fatal(err)
+	}
+	switch {
+	case args[0] == "list" && len(args) == 1:
+		if !st.CommandsListedOnly {
+			fmt.Println("every host takes commands when they are on, sshr commands only limits them to the hosts below")
+		} else {
+			fmt.Println("only the hosts below take commands")
+		}
+		hosts, err := store.List()
+		if err != nil {
+			fatal(err)
+		}
+		for i := range hosts {
+			if _, ok := st.CommandHosts[hosts[i].ID]; !ok {
+				continue
+			}
+			state := "allowed"
+			if st.CommandHosts[hosts[i].ID] != store.CommandTarget(&hosts[i]) {
+				state = "points elsewhere since it was allowed, allow it again"
+			}
+			fmt.Printf("  %s (%s): %s\n", hosts[i].Name, hosts[i].Dest(), state)
+		}
+		return
+	case args[0] == "only" && len(args) == 1:
+		st.CommandsListedOnly = true
+	case args[0] == "all" && len(args) == 1:
+		st.CommandsListedOnly = false
+	case args[0] == "allow" && len(args) == 2:
+		h := findHost(store, "commands allow", args[1])
+		st.AllowCommands(h.ID, store.CommandTarget(h))
+	case args[0] == "deny" && len(args) == 2:
+		st.DenyCommands(findHost(store, "commands deny", args[1]).ID)
+	default:
+		fmt.Fprintln(os.Stderr, commandsUsage)
+		os.Exit(1)
+	}
+	if err := app.SaveSettings(st); err != nil {
+		fatal(err)
+	}
+}
+
+// commandPolicy checks a host before a command from sshr mcp or sshr
+// serve, it reads the settings each time so sshr commands allow works
+// without a restart, a settings file that does not read refuses
+func commandPolicy(store *app.Store, listedOnly *bool) func(*app.Host) error {
+	return func(h *app.Host) error {
+		st, err := app.LoadSettings()
+		if err != nil {
+			return fmt.Errorf("settings.json does not read, commands are refused: %v", err)
+		}
+		if listedOnly != nil {
+			st.CommandsListedOnly = *listedOnly
+		}
+		return st.CommandsAllowed(h.ID, h.Name, store.CommandTarget(h))
+	}
+}
+
 // cmdGateway shows, sets or removes the host connect falls back to when
 // a host does not answer directly
 func cmdGateway(store *app.Store, args []string) {

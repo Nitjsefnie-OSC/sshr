@@ -102,6 +102,12 @@ Every sshr feature outside the GUI with four answers: what it is, what problem i
 - **Why it helps:** no key file to lose in backups or dotfile repos, a passphrase is asked once
 - **Why this way:** ssh offers only this key and agent forwarding is off, so neither other keys nor the server can reach it
 
+### Vault under a passphrase
+- **What:** `sshr vault passphrase` keeps the vault key in a file wrapped with a passphrase instead of the system keychain, `sshr vault keychain` moves it back, off by default
+- **What for:** servers, containers and minimal desktops have no Secret Service, saved passwords did not work there at all
+- **Why it helps:** saved passwords and stored keys work on such a machine, the same key as before, so nothing has to be saved again
+- **Why this way:** Argon2id with the parameters in the file makes a stolen file expensive to guess, the passphrase is asked once per run and never from stdin or in mcp, the keychain stays the default because it asks nothing and is not attackable offline
+
 ### Keys from an ssh agent
 - **What:** a host uses the system agent, the 1Password SSH agent or any agent socket, with one chosen key
 - **What for:** keys that should never be a file, in a password manager or on a hardware token
@@ -196,6 +202,24 @@ Every sshr feature outside the GUI with four answers: what it is, what problem i
 - **Why it helps:** add a host once and it appears everywhere, a host changed on two devices keeps both versions
 - **Why this way:** the server stores only ciphertext and cannot read hosts, add a device or rewrite history, devices are approved by comparing fingerprints, keys stored in sshr stay on their device
 
+### Sync through an S3 bucket
+- **What:** `sshr sync init --backend s3` keeps the encrypted account in an S3 bucket (AWS S3, Cloudflare R2) instead of on `sshr-sync`
+- **What for:** sync without running a server, in a bucket you already have
+- **Why it helps:** the same encryption, signatures and chained manifests as with sshr-sync, the bucket stores only ciphertext
+- **Why this way:** the next manifest is written with `If-None-Match: *`, so of two devices one wins, a bucket that writes over an object it should refuse is turned down before the account goes there, the secret key stays in the keychain and never on the command line, off by default since every device shares one bucket key, `remove-device` asks for a new key and `sshr sync store-key` saves it on each device that stays
+
+### Sync through a WebDAV folder
+- **What:** `sshr sync init --backend webdav` keeps the encrypted account in a WebDAV folder, Nextcloud or ownCloud
+- **What for:** sync through a cloud folder you already have, without a server or a bucket
+- **Why it helps:** the same encryption, signatures and chained manifests as with sshr-sync, the folder holds only ciphertext
+- **Why this way:** the next manifest is a PUT with `If-None-Match: *`, setup refuses a server that writes over a taken name (OCIS, nginx, rclone, Caddy, dufs do), redirects are never followed, the password stays in the keychain, off by default since every device shares one password and no WebDAV server decides the create strictly atomically
+
+### Sync through a Supabase project
+- **What:** `sshr sync init --backend supabase` keeps the encrypted account in a Supabase project, a free one is enough
+- **What for:** sync without running a server, renting a bucket or trusting a WebDAV server with races
+- **Why it helps:** the primary key of a table decides two pushes at once, so the history never forks, the project holds only ciphertext
+- **Why this way:** `sshr sync supabase-sql` prints one SQL file for the SQL editor, the objects sit in a schema the API does not expose, the device reaches them only through functions that check the sshr key first, a stale key is an error and never an empty store, every call is a POST so no read replica answers, the device holds the publishable key and its own sshr key in the keychain, never a secret or service_role key, off by default since every device shares one sshr key
+
 ### Safe saves from several sshr processes
 - **What:** every change of hosts runs under a lock file, the sync takes it per host from reading the local version to writing the remote one, one sync run at a time on a machine
 - **What for:** the app, the CLI, `sshr serve`, `sshr mcp` and a sync can run at the same time
@@ -240,6 +264,7 @@ Every sshr feature outside the GUI with four answers: what it is, what problem i
 - **What:** `sshr ext install <git url or folder>` shows what an extension is and asks, then `sshr <name>` runs it, `sshr ext list` and `sshr ext remove` manage them, an extension is a program in `~/.sshr/extensions/<name>/` with a manifest `sshr-ext.json`, written in any language
 - **What for:** your own commands under the same word `sshr` without a fork or a change of sshr, a deploy helper, a report of your hosts, a wrapper for your cloud
 - **Why it helps:** the tools around your hosts live in one place, a built-in command never changes whatever you install, and the extension can read your hosts back with `sshr list --json`
+- **Community catalog:** as Obsidian does with community plugins, it is off until `sshr ext community on`, which says that nobody reviews the code and the sshr authors take no responsibility for it, then `sshr ext search [words]` lists the catalog and `sshr ext install <name>` takes the git address and the commit from it, so what you install is the commit the entry was added with and never a newer one pushed later, the catalog is the file `extensions/catalog.json` in the sshr repository, an author adds an entry with a pull request and the code stays in the author's own repository, the catalog is read only when one of those runs, `ext_catalog` in settings points at your own
 - **Import sources:** an extension of kind `import` prints hosts as JSON and `sshr ext import <name>` saves them, for Remmina (`extensions/remmina`), PuTTY on Linux and macOS (`extensions/putty`), Termius or a company inventory, only a fixed list of fields is read and never a password or key, a second import skips hosts that are already there
 - **Why this way:** an executable with a fixed protocol, not a Go plugin or WASM, so any language works and a crash stays in its own process, sshr asks before it installs and shows the manifest, the command, the commit and a hash, every file of the folder is pinned and a changed file stops the run until you install it again, the extension never gets a password, key or secret reference or the askpass and password manager variables of sshr, it is still a program that runs as you, which is said in `sshr ext install` and in [SECURITY.md](SECURITY.md)
 
@@ -254,6 +279,24 @@ Every sshr feature outside the GUI with four answers: what it is, what problem i
 - **What for:** editor plugins, launchers and scripts
 - **Why it helps:** they integrate without parsing CLI output
 - **Why this way:** a 0600 unix socket by default, a loopback port only with a token, web pages and DNS rebinding are refused, no secrets in or out
+
+### Ask before every command
+- **What:** `sshr mcp --confirm-commands` (or `"confirm_commands": true`) asks you in the assistant's own window before each `run_command`, with the host and the command, it runs only after an explicit yes, off by default
+- **What for:** an assistant's client can be set to run tools without asking, then nothing stands between a model and your servers
+- **Why it helps:** the question comes from sshr itself, so it holds whatever the client's own setting is
+- **Why this way:** MCP elicitation, a form with one box to tick, anything else (no, closed, an error, no answer in 5 minutes, a client that cannot show forms) refuses the command, every command is asked about instead of guessing which ones are dangerous since a list of dangerous commands is easy to get around, the REST API refuses commands while this is on, it has nobody to ask
+
+### Commands only on chosen hosts
+- **What:** `sshr commands only` limits commands from `sshr mcp` and `sshr serve` to the hosts of `sshr commands allow <host>`, `sshr commands all` goes back, `sshr commands list` shows them, `--listed-hosts-only` and `--all-hosts` for one run, off by default
+- **What for:** an assistant that may run commands on a test box should not reach production with the same switch
+- **Why it helps:** commands stay on for the servers you chose and the rest are refused with a message how to allow them
+- **Why this way:** the list is in settings.json, which never syncs, so another device cannot add a host here, each entry is bound to where the host pointed when it was allowed, a host repointed later (on another device too) is refused until it is allowed again, off by default since every host took commands before and a new server would need one more step
+
+### Audit log of assistants and scripts
+- **What:** `sshr mcp --audit` and `sshr serve --audit` (or `"audit_log": true`) write every upload, command, host change and tunnel to `~/.sshr/audit.jsonl`, one JSON line when it starts and one when it ends, with the client, the host and the exit code, off by default
+- **What for:** an assistant or a script acts on your servers while you look elsewhere, afterwards you want to know what it did and where
+- **Why it helps:** one file answers which host got which command at what time and from which client, a start without an end shows a run that was cut off
+- **Why this way:** a command is kept as its length, first word and a keyed hash unless `"audit_commands": "full"`, a command may carry a password, lines are appended under a lock so several sshr processes never mix them, the file moves to `.1` at `audit_max_mb` (10 MB) and five old files stay, an action whose start cannot be written does not run, the log is off by default because it is one more file that grows and tells which servers were used when
 
 ## Installing
 

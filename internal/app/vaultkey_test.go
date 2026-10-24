@@ -3,6 +3,7 @@ package app
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+	"sshr.dev/internal/vault"
 )
 
 func testKey(t *testing.T, passphrase string) (pemData []byte, pub string) {
@@ -46,7 +48,7 @@ func TestVaultKeySealed(t *testing.T) {
 		t.Fatalf("host = %+v", h)
 	}
 	b, _ := os.ReadFile(filepath.Join(s.Dir, h.ID+".json"))
-	if strings.Contains(string(b), "PRIVATE KEY") || !strings.Contains(string(b), `"key_sealed": "v1:`) {
+	if strings.Contains(string(b), "PRIVATE KEY") || !strings.Contains(string(b), `"key_sealed": "v2:`) {
 		t.Fatalf("host file:\n%s", b)
 	}
 	if p, _ := os.ReadFile(s.pubPath(h)); strings.TrimSpace(string(p)) != pub {
@@ -133,5 +135,101 @@ func TestVaultKeyAgent(t *testing.T) {
 	stop()
 	if _, err := os.Stat(sock); !os.IsNotExist(err) {
 		t.Errorf("agent socket left: %v", err)
+	}
+}
+
+// a stored key is sealed for its destination: an address changed in the
+// file by hand does not open it, a change through sshr keeps it, an old v1
+// seal is sealed again (#174)
+func TestStoredKeyBoundToDestination(t *testing.T) {
+	useMockKeychain(t)
+	s := &Store{Dir: t.TempDir()}
+	data, _ := testKey(t, "")
+	h, err := s.Add(Host{Name: "k", Host: "10.0.0.1", User: "u", KeyData: data})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(s.Dir, h.ID+".json")
+	b, _ := os.ReadFile(path)
+	os.WriteFile(path, []byte(strings.Replace(string(b), `"10.0.0.1"`, `"203.0.113.66"`, 1)), 0o600)
+	moved, _ := s.Find(h.ID)
+	if _, err := loadKey(moved); err == nil {
+		t.Fatal("the key opened for an address changed outside sshr")
+	}
+	os.WriteFile(path, b, 0o600)
+	cur, _ := s.Find(h.ID)
+	cur.Host, cur.Port = "10.0.0.2", 2222
+	if _, err := s.Update(h.ID, *cur); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Find(h.ID)
+	if _, err := loadKey(got); err != nil {
+		t.Fatalf("after an edit in sshr: %v", err)
+	}
+	// a key sealed the old way is opened and sealed for its destination
+	old, err := vault.Seal(data, h.ID, "key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ = os.ReadFile(path)
+	var m map[string]any
+	json.Unmarshal(b, &m)
+	m["key_sealed"] = old
+	b, _ = json.Marshal(m)
+	os.WriteFile(path, b, 0o600)
+	s.upgradeSeals()
+	b, _ = os.ReadFile(path)
+	if !strings.Contains(string(b), `"key_sealed": "v2:`) {
+		t.Fatalf("the v1 key seal was not upgraded:\n%s", b)
+	}
+	up, _ := s.Find(h.ID)
+	if _, err := loadKey(up); err != nil {
+		t.Fatalf("the upgraded key does not open: %v", err)
+	}
+}
+
+// a host moved by another device does not take the key stored here to its
+// new address, the key is dropped and a note says so (#177)
+func TestImportedMoveDoesNotTakeTheStoredKey(t *testing.T) {
+	useMockKeychain(t)
+	s := &Store{Dir: t.TempDir()}
+	data, _ := testKey(t, "")
+	h, err := s.Add(Host{Name: "k", Host: "10.0.0.1", User: "u", KeyData: data})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := *h
+	in.KeySealed, in.Host = "", "203.0.113.66"
+	_, notes := FromOtherDevice(in, h)
+	got, err := s.Import(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.KeySealed != "" {
+		t.Fatalf("the stored key went with the host: %q", got.KeySealed)
+	}
+	if _, err := loadKey(got); err == nil {
+		t.Fatal("the key opens for the address the other device chose")
+	}
+	found := false
+	for _, n := range notes {
+		found = found || strings.Contains(n, "key stored here is not used")
+	}
+	if !found {
+		t.Errorf("no note: %q", notes)
+	}
+	// the same host from another device without a move keeps the key
+	h2, err := s.Add(Host{Name: "k2", Host: "10.0.0.2", User: "u", KeyData: data})
+	if err != nil {
+		t.Fatal(err)
+	}
+	same := *h2
+	same.KeySealed, same.Tags = "", []string{"x"}
+	kept, err := s.Import(same)
+	if err != nil || kept.KeySealed == "" {
+		t.Fatalf("an import without a move lost the key: %v", err)
+	}
+	if _, err := loadKey(kept); err != nil {
+		t.Fatalf("the kept key does not open: %v", err)
 	}
 }

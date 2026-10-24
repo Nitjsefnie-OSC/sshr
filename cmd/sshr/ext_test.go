@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -315,5 +317,98 @@ JSON
 	}
 	if _, errOut, code := run("ext", "import", "missing"); code != 1 || !strings.Contains(errOut, "no extension") {
 		t.Errorf("an extension that is not installed: %d %q", code, errOut)
+	}
+}
+
+// sshr ext search reads the catalog the settings name, an install by a name
+// the catalog does not have says so, a folder of that name still wins (#170)
+func TestExtSearchAndInstallByName(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"version":1,"extensions":[{"name":"hello","url":"https://example.com/h.git","commit":"0123456789abcdef0123456789abcdef01234567","description":"says hi","author":"Ann","kinds":["command"]}]}`))
+	}))
+	defer srv.Close()
+	home := t.TempDir()
+	os.MkdirAll(filepath.Join(home, ".sshr"), 0o700)
+	os.WriteFile(filepath.Join(home, ".sshr", "settings.json"), []byte(`{"ext_catalog":"`+srv.URL+`","ext_community":true}`), 0o600)
+	out, errOut, code := sshrIn(t, home, "ext", "search", "hi")
+	if code != 0 || !strings.Contains(out, "hello") || !strings.Contains(out, "Ann") || !strings.Contains(out, "nobody reviews") {
+		t.Errorf("search: %d %q %q", code, out, errOut)
+	}
+	_, errOut, code = sshrIn(t, home, "ext", "install", "nope")
+	if code == 0 || !strings.Contains(errOut, `no extension "nope" in the catalog`) {
+		t.Errorf("install of a name the catalog lacks: %d %q", code, errOut)
+	}
+}
+
+// a plain file named like a catalog entry does not stop the catalog lookup
+// (#269)
+func TestCatalogEntryIgnoresAFile(t *testing.T) {
+	t.Chdir(t.TempDir())
+	os.WriteFile("nope", nil, 0o600)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"version":1,"extensions":[{"name":"nope","url":"https://example.com/n.git","commit":"0123456789abcdef0123456789abcdef01234567","kinds":["command"]}]}`))
+	}))
+	defer srv.Close()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	os.MkdirAll(filepath.Join(home, ".sshr"), 0o700)
+	os.WriteFile(filepath.Join(home, ".sshr", "settings.json"), []byte(`{"ext_catalog":"`+srv.URL+`","ext_community":true}`), 0o600)
+	entry, ok := catalogEntry("nope")
+	if !ok || entry.URL != "https://example.com/n.git" {
+		t.Errorf("entry %+v %v", entry, ok)
+	}
+}
+
+// a folder here with a catalog-like name is named as a folder on the
+// install screen (#260)
+func TestLocalFolderNote(t *testing.T) {
+	t.Chdir(t.TempDir())
+	os.Mkdir("hello", 0o700)
+	os.WriteFile("plain", nil, 0o600)
+	if note := localFolderNote("hello"); !strings.Contains(note, "not the catalog entry") {
+		t.Errorf("folder hello: %q", note)
+	}
+	for _, s := range []string{"./hello", "plain", "missing"} {
+		if note := localFolderNote(s); note != "" {
+			t.Errorf("%s: %q", s, note)
+		}
+	}
+}
+
+// an install over an installed copy that no longer loads says it replaces
+// one (#268)
+func TestInstallOverABrokenCopy(t *testing.T) {
+	home := t.TempDir()
+	broken := filepath.Join(home, ".sshr", "extensions", "hello")
+	os.MkdirAll(broken, 0o700)
+	os.WriteFile(filepath.Join(broken, "sshr-ext.json"), []byte(`{"protocol":1,"name":"hello","version":"1\u001b","description":"d","kinds":["command"],"command":{"default":["run.sh"]}}`), 0o600)
+	src := filepath.Join(t.TempDir(), "hello")
+	os.MkdirAll(src, 0o700)
+	os.WriteFile(filepath.Join(src, "sshr-ext.json"), []byte(`{"protocol":1,"name":"hello","version":"2","description":"says hi","kinds":["command"],"command":{"default":["run.sh"]}}`), 0o600)
+	os.WriteFile(filepath.Join(src, "run.sh"), []byte("#!/bin/sh\necho hi\n"), 0o700)
+	out, errOut, code := sshrIn(t, home, "ext", "install", src, "--yes")
+	if code != 0 || !strings.Contains(out, "replaces an installed copy that does not load") {
+		t.Errorf("install over a broken copy: %d %q %q", code, out, errOut)
+	}
+}
+
+// the catalog is off until sshr ext community on, which says nobody
+// reviews community extensions (#170)
+func TestExtCommunityMode(t *testing.T) {
+	home := t.TempDir()
+	if _, errOut, code := sshrIn(t, home, "ext", "search"); code == 0 || !strings.Contains(errOut, "community extensions are off") {
+		t.Errorf("search while off: %d %q", code, errOut)
+	}
+	out, _, code := sshrIn(t, home, "ext", "community", "on")
+	if code != 0 || !strings.Contains(out, "do not") || !strings.Contains(out, "take no responsibility") {
+		t.Errorf("community on: %d %q", code, out)
+	}
+	if out, _, _ := sshrIn(t, home, "ext", "community"); !strings.Contains(out, "are on") {
+		t.Errorf("community state: %q", out)
+	}
+	sshrIn(t, home, "ext", "community", "off")
+	if out, _, _ := sshrIn(t, home, "ext", "community"); !strings.Contains(out, "are off") {
+		t.Errorf("community after off: %q", out)
 	}
 }
