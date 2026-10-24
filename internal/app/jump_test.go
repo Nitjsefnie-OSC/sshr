@@ -1,6 +1,7 @@
 package app
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -42,7 +43,11 @@ func TestProxyCommandQuotesHops(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if line := strings.Join(args, " "); !strings.Contains(line, " __proxy 'bastion,gw' %h %p") {
+	want := " __proxy 'bastion,gw' %h %p"
+	if runtime.GOOS == "windows" {
+		want = " __proxy bastion,gw %h %p"
+	}
+	if line := strings.Join(args, " "); !strings.Contains(line, want) {
 		t.Fatalf("ProxyCommand = %s", line)
 	}
 }
@@ -55,8 +60,8 @@ func TestProxyCommandGolden(t *testing.T) {
 		{"linux", "/opt/my tools/sshr", "bastion,gw", `"/opt/my tools/sshr" __proxy 'bastion,gw' %h %p`},
 		{"linux", "/usr/local/bin/sshr", "ops@gw:2222", `"/usr/local/bin/sshr" __proxy 'ops@gw:2222' %h %p`},
 		{"linux", "/usr/local/bin/sshr", "u@[::1]:22", `"/usr/local/bin/sshr" __proxy 'u@[::1]:22' %h %p`},
-		{"windows", `C:\Users\u\sshr.exe`, "bastion", `"C:\\Users\\u\\sshr.exe" __proxy 'bastion' %h %p`},
-		{"windows", `C:\Users\u\sshr.exe`, "ops@gw:2222", `"C:\\Users\\u\\sshr.exe" __proxy 'ops@gw:2222' %h %p`},
+		{"windows", `C:\Users\u\sshr.exe`, "bastion", `"C:\Users\u\sshr.exe" __proxy bastion %h %p`},
+		{"windows", `C:\Users\u\sshr.exe`, "ops@gw:2222", `"C:\Users\u\sshr.exe" __proxy ops@gw:2222 %h %p`},
 	} {
 		if got := proxyCommand(tc.goos, tc.exe, tc.chain); got != tc.want {
 			t.Errorf("proxyCommand(%q, %q, %q):\n got %s\nwant %s", tc.goos, tc.exe, tc.chain, got, tc.want)

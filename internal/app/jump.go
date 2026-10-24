@@ -73,8 +73,15 @@ func (s *Store) JumpArgs(h *Host) ([]string, error) {
 }
 
 // proxyCommand builds the ProxyCommand value that runs sshr as
-// "<exe> __proxy <chain> %h %p", spelled for the shell of goos
+// "<exe> __proxy <chain> %h %p", spelled for the shell of goos: a POSIX
+// shell takes the exe Go-quoted and the chain in single quotes, windows
+// takes the exe in plain double quotes, its backslashes as written, and
+// the chain bare, hopRe keeps characters any of those shells would read
+// out of the chain
 func proxyCommand(goos, exe, chain string) string {
+	if goos == "windows" {
+		return `"` + exe + `" ` + ProxyCommandName + " " + chain + " %h %p"
+	}
 	return fmt.Sprintf("%q %s %s %%h %%p", exe, ProxyCommandName, shQuote(chain))
 }
 
