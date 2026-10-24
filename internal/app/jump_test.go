@@ -60,6 +60,7 @@ func TestProxyCommandGolden(t *testing.T) {
 		{"linux", "/opt/my tools/sshr", "bastion,gw", `"/opt/my tools/sshr" __proxy 'bastion,gw' %h %p`},
 		{"linux", "/usr/local/bin/sshr", "ops@gw:2222", `"/usr/local/bin/sshr" __proxy 'ops@gw:2222' %h %p`},
 		{"linux", "/usr/local/bin/sshr", "u@[::1]:22", `"/usr/local/bin/sshr" __proxy 'u@[::1]:22' %h %p`},
+		{"linux", "/opt/100%/sshr", "bastion", `"/opt/100%%/sshr" __proxy 'bastion' %h %p`},
 		{"windows", `C:\Users\u\sshr.exe`, "bastion", `"C:\Users\u\sshr.exe" __proxy bastion %h %p`},
 		{"windows", `C:\Users\u\sshr.exe`, "ops@gw:2222", `"C:\Users\u\sshr.exe" __proxy ops@gw:2222 %h %p`},
 	} {
@@ -115,7 +116,7 @@ func splitExeSegment(line string) (exe, rest string, ok bool) {
 		if end < 0 {
 			return "", "", false
 		}
-		return line[1:1+end], strings.TrimPrefix(line[end+2:], " "), true
+		return line[1 : 1+end], strings.TrimPrefix(line[end+2:], " "), true
 	}
 	i := strings.IndexByte(line, ' ')
 	if i < 0 {

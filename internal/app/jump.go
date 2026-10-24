@@ -64,8 +64,6 @@ func (s *Store) JumpArgs(h *Host) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	// ssh expands %-tokens in ProxyCommand, so a literal % must be doubled
-	exe = strings.ReplaceAll(exe, "%", "%%")
 	// the hops are checked by hopRe, quoting them as well keeps the shell
 	// out even if that check is ever loosened
 	cmd := proxyCommand(runtime.GOOS, exe, strings.Join(parts, ","))
@@ -79,6 +77,8 @@ func (s *Store) JumpArgs(h *Host) ([]string, error) {
 // the chain bare, hopRe keeps characters any of those shells would read
 // out of the chain
 func proxyCommand(goos, exe, chain string) string {
+	// ssh expands %-tokens in ProxyCommand, so a literal % must be doubled
+	exe = strings.ReplaceAll(exe, "%", "%%")
 	if goos == "windows" {
 		return `"` + exe + `" ` + ProxyCommandName + " " + chain + " %h %p"
 	}
