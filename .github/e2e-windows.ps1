@@ -11,6 +11,20 @@ $cap = Get-WindowsCapability -Online | Where-Object Name -like 'OpenSSH.Server*'
 if ($cap.State -ne 'Installed') {
     Add-WindowsCapability -Online -Name $cap.Name | Out-Null
 }
+
+# sshr's remote commands are sh lines; sshd hands a session command to the
+# DefaultShell, cmd by default, which parses the sh redirects as its own and
+# dies on /dev/null, so the e2e gives sshd Git's sh and puts it on the
+# machine PATH the service snapshots when it starts
+$gitbin = 'C:\Program Files\Git\usr\bin'
+if (Test-Path (Join-Path $gitbin 'sh.exe')) {
+    if (-not (Test-Path 'HKLM:\SOFTWARE\OpenSSH')) { New-Item 'HKLM:\SOFTWARE\OpenSSH' | Out-Null }
+    Set-ItemProperty -Path 'HKLM:\SOFTWARE\OpenSSH' -Name DefaultShell -Value (Join-Path $gitbin 'sh.exe')
+    $p = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    if (($p -split ';') -notcontains $gitbin) {
+        [Environment]::SetEnvironmentVariable('Path', "$gitbin;$p", 'Machine')
+    }
+}
 Start-Service sshd
 
 # the runner's user is an administrator, so sshd reads its key from the
