@@ -15,7 +15,7 @@ Start-Service sshd
 
 # the runner's user is an administrator, so sshd reads its key from the
 # administrators file, and its ACL must admit only system and admins
-ssh-keygen -q -t ed25519 -N '""' -f "$w\userkey"
+ssh-keygen -q -t ed25519 -N '' -f "$w\userkey"
 $aak = Join-Path $env:ProgramData 'ssh\administrators_authorized_keys'
 Get-Content "$w\userkey.pub" | Add-Content $aak
 icacls $aak /inheritance:r /grant '*S-1-5-32-544:F' /grant '*S-1-5-18:F' | Out-Null
@@ -29,6 +29,8 @@ foreach ($i in 1..10) {
     Start-Sleep 1
 }
 
+# a function call's binder consumes the -- separator, so every call whose
+# command carries -- goes to sshr directly, the wrapper is for the rest
 function Invoke-Sshr {
     & $sshr @args
     if ($LASTEXITCODE -ne 0) { throw "sshr $($args -join ' ') exited $LASTEXITCODE" }
@@ -37,7 +39,8 @@ function Invoke-Sshr {
 Invoke-Sshr add 127.0.0.1 -u $env:USERNAME -n winbase -p 22 -k "$w\userkey"
 Invoke-Sshr add 127.0.0.1 -u $env:USERNAME -n winjump -p 22 -k "$w\userkey" -J winbase
 
-Invoke-Sshr run winbase -- 'echo direct-ok'
+& $sshr run winbase -- 'echo direct-ok'
+if ($LASTEXITCODE -ne 0) { throw "sshr run winbase exited $LASTEXITCODE" }
 $out = & $sshr run winjump -- 'echo via-jump-ok'
 if ($LASTEXITCODE -ne 0) { throw "sshr run winjump exited $LASTEXITCODE" }
 if ("$out" -notmatch 'via-jump-ok') { throw "the command through the jump host printed: $out" }
