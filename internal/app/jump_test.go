@@ -63,6 +63,7 @@ func TestProxyCommandGolden(t *testing.T) {
 		{"linux", "/opt/100%/sshr", "bastion", `"/opt/100%%/sshr" __proxy 'bastion' %h %p`},
 		{"windows", `C:\Users\u\sshr.exe`, "bastion", `"C:\Users\u\sshr.exe" __proxy bastion %h %p`},
 		{"windows", `C:\Users\u\sshr.exe`, "ops@gw:2222", `"C:\Users\u\sshr.exe" __proxy ops@gw:2222 %h %p`},
+		{"windows", `C:\100%\sshr.exe`, "bastion", `"C:\100%%\sshr.exe" __proxy bastion %h %p`},
 	} {
 		if got := proxyCommand(tc.goos, tc.exe, tc.chain); got != tc.want {
 			t.Errorf("proxyCommand(%q, %q, %q):\n got %s\nwant %s", tc.goos, tc.exe, tc.chain, got, tc.want)
